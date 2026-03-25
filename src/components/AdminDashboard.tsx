@@ -11,13 +11,16 @@ import {
   Calendar,
   Search,
   CheckCircle2,
-  Clock
+  Clock,
+  FileText
 } from "lucide-react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { Order, Analytics } from "../types";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "../lib/utils";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 export default function AdminDashboard() {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -76,23 +79,44 @@ export default function AdminDashboard() {
     return () => ws.close();
   }, [navigate]);
 
-  const exportToCSV = () => {
-    const headers = ["ID", "Date", "Client", "Adresse", "Articles", "Total"];
-    const rows = orders.map(o => [
-      o.id,
-      format(new Date(o.createdAt), "dd/MM/yyyy HH:mm"),
+  const exportToPDF = () => {
+    const doc = new jsPDF();
+    const dateStr = format(new Date(), "dd/MM/yyyy HH:mm");
+
+    // Header
+    doc.setFontSize(22);
+    doc.setTextColor(255, 208, 0); // #FFD000
+    doc.text("F-QUICK", 14, 20);
+    
+    doc.setFontSize(14);
+    doc.setTextColor(100);
+    doc.text("Rapport des Commandes", 14, 30);
+    doc.text(`Généré le: ${dateStr}`, 14, 38);
+
+    // Summary Stats
+    doc.setFontSize(12);
+    doc.setTextColor(0);
+    doc.text(`Total Commandes: ${analytics?.orderCount || 0}`, 14, 50);
+    doc.text(`Revenu Total: ${analytics?.totalRevenue || 0} MAD`, 14, 58);
+
+    // Table
+    const tableData = orders.map(o => [
+      format(new Date(o.createdAt), "dd/MM HH:mm"),
       o.customerPhone,
-      o.customerAddress.replace(/,/g, " "),
-      o.items.map(i => `${i.name} x${i.quantity}`).join(" | "),
-      o.total
+      o.items.map(i => `${i.name} x${i.quantity}`).join(", "),
+      `${o.total} MAD`
     ]);
 
-    const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `orders_export_${format(new Date(), "yyyy-MM-dd")}.csv`;
-    link.click();
+    autoTable(doc, {
+      startY: 70,
+      head: [["Date", "Client", "Articles", "Total"]],
+      body: tableData,
+      headStyles: { fillColor: [255, 208, 0], textColor: [0, 0, 0] },
+      alternateRowStyles: { fillColor: [245, 245, 245] },
+      margin: { top: 70 },
+    });
+
+    doc.save(`fquick_orders_${format(new Date(), "yyyy-MM-dd")}.pdf`);
   };
 
   const handleLogout = () => {
@@ -136,10 +160,10 @@ export default function AdminDashboard() {
 
           <div className="flex items-center gap-4">
             <button 
-              onClick={exportToCSV}
-              className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 px-6 py-3 rounded-xl font-bold transition-all"
+              onClick={exportToPDF}
+              className="flex items-center gap-2 bg-[#FFD000] text-black hover:opacity-90 px-6 py-3 rounded-xl font-bold transition-all"
             >
-              <Download size={18} /> Exporter CSV
+              <FileText size={18} /> Exporter PDF
             </button>
             <div className="relative">
               <button className="p-3 bg-white/5 border border-white/10 rounded-xl text-white relative">
