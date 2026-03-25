@@ -8,6 +8,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
+    "db:init": "echo '[]' > orders.json",
+    "db:setup": "npm run db:init",
+    "db:reset": "npm run db:init",
+    "db": "npm run db:init",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

@@ -12,6 +12,7 @@ interface CartProps {
 }
 
 export default function Cart({ items, onClose, onUpdateQuantity, onClearCart }: CartProps) {
+  const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [isOrdering, setIsOrdering] = useState(false);
@@ -19,8 +20,8 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart }: 
   const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
   const handleCheckout = async () => {
-    if (!phone || !address) {
-      alert("Veuillez entrer votre téléphone et votre adresse.");
+    if (!name || !phone || !address) {
+      alert("Veuillez remplir tous les champs (Nom, Téléphone et Adresse).");
       return;
     }
 
@@ -29,6 +30,7 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart }: 
     const orderData = {
       items,
       total,
+      customerName: name,
       customerPhone: phone,
       customerAddress: address,
     };
@@ -44,14 +46,16 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart }: 
       if (!res.ok) throw new Error("Failed to save order");
 
       // Generate WhatsApp Message
-      const message = `*NOUVELLE COMMANDE F-QUICK*%0A%0A` +
-        `*Client:* ${phone}%0A` +
-        `*Adresse:* ${address}%0A%0A` +
-        `*Articles:*%0A` +
-        items.map(item => `- ${item.name} x${item.quantity} (${item.price * item.quantity} MAD)`).join("%0A") +
-        `%0A%0A*TOTAL: ${total} MAD*`;
+      const message = 
+        `🛒 *Nouvelle Commande — F-Quick*\n\n` +
+        `👤 *Nom :* ${name}\n` +
+        `📞 *Téléphone :* ${phone}\n` +
+        `📍 *Adresse :* ${address}\n\n` +
+        `🧾 *Détails :*\n` +
+        items.map(item => `• ${item.name} x${item.quantity} — ${(item.price * item.quantity).toFixed(2)} MAD`).join("\n") +
+        `\n\n💰 *Total : ${total.toFixed(2)} MAD*`;
 
-      const whatsappUrl = `https://wa.me/${BUSINESS_INFO.whatsapp}?text=${message}`;
+      const whatsappUrl = `https://wa.me/${BUSINESS_INFO.whatsapp}?text=${encodeURIComponent(message)}`;
       
       onClearCart();
       onClose();
@@ -134,6 +138,16 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart }: 
         {items.length > 0 && (
           <div className="p-6 bg-white/5 border-t border-white/10 space-y-6">
             <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">NOM COMPLET</label>
+                <input 
+                  type="text" 
+                  placeholder="Votre nom..."
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 focus:border-[#FFD000] outline-none transition-all font-bold"
+                />
+              </div>
               <div>
                 <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">TÉLÉPHONE</label>
                 <input 

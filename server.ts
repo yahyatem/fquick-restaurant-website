@@ -12,7 +12,27 @@ const wss = new WebSocketServer({ server: httpServer });
 app.use(express.json());
 
 // In-memory storage for orders (could use a file or DB for persistence)
+const DB_PATH = path.join(process.cwd(), "orders.json");
 let orders: any[] = [];
+
+// Load orders from file if it exists
+if (fs.existsSync(DB_PATH)) {
+  try {
+    const data = fs.readFileSync(DB_PATH, "utf-8");
+    orders = JSON.parse(data);
+  } catch (err) {
+    console.error("Error loading orders from DB:", err);
+    orders = [];
+  }
+}
+
+function saveOrders() {
+  try {
+    fs.writeFileSync(DB_PATH, JSON.stringify(orders, null, 2));
+  } catch (err) {
+    console.error("Error saving orders to DB:", err);
+  }
+}
 
 // WebSocket connections
 const clients = new Set<WebSocket>();
@@ -43,6 +63,7 @@ app.post("/api/orders", (req, res) => {
     createdAt: new Date().toISOString(),
   };
   orders.push(order);
+  saveOrders();
   broadcast({ type: "NEW_ORDER", order });
   res.status(201).json(order);
 });

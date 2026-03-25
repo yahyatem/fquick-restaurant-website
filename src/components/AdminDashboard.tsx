@@ -102,7 +102,7 @@ export default function AdminDashboard() {
     // Table
     const tableData = orders.map(o => [
       format(new Date(o.createdAt), "dd/MM HH:mm"),
-      o.customerPhone,
+      o.customerName || o.customerPhone,
       o.items.map(i => `${i.name} x${i.quantity}`).join(", "),
       `${o.total} MAD`
     ]);
@@ -229,8 +229,9 @@ export default function AdminDashboard() {
                   {orders.map(order => (
                     <tr key={order.id} className="hover:bg-white/5 transition-colors">
                       <td className="px-6 py-4">
-                        <div className="font-bold">{order.customerPhone}</div>
-                        <div className="text-xs text-gray-500 truncate max-w-[200px]">{order.customerAddress}</div>
+                        <div className="font-black text-[#FFD000]">{order.customerName}</div>
+                        <div className="font-bold text-xs">{order.customerPhone}</div>
+                        <div className="text-[10px] text-gray-500 truncate max-w-[200px]">{order.customerAddress}</div>
                       </td>
                       <td className="px-6 py-4">
                         <div className="text-sm font-medium">
@@ -301,8 +302,9 @@ export default function AdminDashboard() {
                         </div>
                         <span className="text-[10px] font-black opacity-50">MAINTENANT</span>
                       </div>
-                      <p className="text-xs font-bold mb-1">{notif.customerPhone}</p>
-                      <p className="text-[10px] font-medium opacity-80 truncate">{notif.customerAddress}</p>
+                      <p className="text-xs font-black mb-1">{notif.customerName}</p>
+                      <p className="text-[10px] font-bold opacity-80">{notif.customerPhone}</p>
+                      <p className="text-[10px] font-medium opacity-70 truncate">{notif.customerAddress}</p>
                     </motion.div>
                   ))}
                 </AnimatePresence>
