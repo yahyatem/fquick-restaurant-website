@@ -36,14 +36,17 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart }: 
     };
 
     try {
-      // Save order to backend
-      const res = await fetch("/api/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(orderData),
-      });
-
-      if (!res.ok) throw new Error("Failed to save order");
+      // Attempt to save order to backend (will fail on static Netlify without functions)
+      // We wrap this in a try-catch so the WhatsApp redirect works even if the backend is down
+      try {
+        await fetch("/api/orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(orderData),
+        });
+      } catch (apiErr) {
+        console.warn("Backend order saving failed (expected on static Netlify):", apiErr);
+      }
 
       // Generate WhatsApp Message
       const message = 
@@ -55,14 +58,17 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart }: 
         items.map(item => `• ${item.name} x${item.quantity} — ${(item.price * item.quantity).toFixed(2)} MAD`).join("\n") +
         `\n\n💰 *Total : ${total.toFixed(2)} MAD*`;
 
-      const whatsappUrl = `https://wa.me/${BUSINESS_INFO.whatsapp}?text=${encodeURIComponent(message)}`;
+      // Use api.whatsapp.com for better cross-platform compatibility
+      const whatsappUrl = `https://api.whatsapp.com/send?phone=${BUSINESS_INFO.whatsapp}&text=${encodeURIComponent(message)}`;
       
       onClearCart();
       onClose();
-      window.open(whatsappUrl, "_blank");
+      
+      // window.location.href is more reliable for mobile redirects than window.open
+      window.location.href = whatsappUrl;
     } catch (err) {
       console.error(err);
-      alert("Une erreur est survenue lors de la commande.");
+      alert("Une erreur est survenue lors de la préparation de votre commande.");
     } finally {
       setIsOrdering(false);
     }
