@@ -10,6 +10,8 @@ import Cart from "./components/Cart";
 import Contact from "./components/Contact";
 import AdminLogin from "./components/AdminLogin";
 import AdminDashboard from "./components/AdminDashboard";
+import LivreurLogin from "./components/LivreurLogin";
+import LivreurPage from "./components/LivreurPage";
 import { cn } from "./lib/utils";
 
 function Navbar({ cartCount, onOpenCart }: { cartCount: number; onOpenCart: () => void }) {
@@ -17,6 +19,7 @@ function Navbar({ cartCount, onOpenCart }: { cartCount: number; onOpenCart: () =
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const location = useLocation();
   const isAdminPage = location.pathname.startsWith("/admin");
+  const isLivreurPage = location.pathname.startsWith("/livreur");
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 20);
@@ -24,7 +27,7 @@ function Navbar({ cartCount, onOpenCart }: { cartCount: number; onOpenCart: () =
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  if (isAdminPage) return null;
+  if (isAdminPage || isLivreurPage) return null;
 
   return (
     <nav className={cn(
@@ -161,6 +164,8 @@ export default function App() {
           } />
           <Route path="/admin/login" element={<AdminLogin />} />
           <Route path="/admin" element={<AdminDashboard />} />
+          <Route path="/livreur/login" element={<LivreurLogin />} />
+          <Route path="/livreur" element={<LivreurPage />} />
         </Routes>
 
         <Footer />
@@ -172,6 +177,7 @@ export default function App() {
               onClose={() => setIsCartOpen(false)} 
               onUpdateQuantity={updateQuantity}
               onClearCart={clearCart}
+              onAddToCart={addToCart}
             />
           )}
         </AnimatePresence>

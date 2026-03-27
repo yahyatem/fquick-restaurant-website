@@ -19,6 +19,7 @@ import { fr } from "date-fns/locale";
 import { Order, Analytics } from "../types";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "../lib/utils";
+import { supabase } from "../lib/supabase";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -36,48 +37,94 @@ export default function AdminDashboard() {
       return;
     }
 
-    const fetchData = async () => {
-      try {
-        const [ordersRes, analyticsRes] = await Promise.all([
-          fetch("/api/orders"),
-          fetch("/api/analytics")
-        ]);
-        const ordersData = await ordersRes.json();
-        const analyticsData = await analyticsRes.json();
-        setOrders(ordersData.reverse());
-        setAnalytics(analyticsData);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
     fetchData();
 
-    // WebSocket for real-time notifications
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${window.location.host}`);
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === "NEW_ORDER") {
-        setOrders(prev => [data.order, ...prev]);
-        setNotifications(prev => [data.order, ...prev]);
+    // Supabase real-time subscription
+    const subscription = supabase
+      .channel('admin_orders')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, (payload) => {
+        const newOrder = payload.new as Order;
+        setOrders(prev => [newOrder, ...prev]);
+        setNotifications(prev => [newOrder, ...prev]);
         
-        // Update analytics locally or refetch
-        fetch("/api/analytics")
-          .then(res => res.json())
-          .then(setAnalytics);
+        // Update analytics
+        setOrders(prevOrders => {
+          const updatedOrders = [newOrder, ...prevOrders];
+          setAnalytics(calculateAnalytics(updatedOrders));
+          return updatedOrders;
+        });
 
         // Play notification sound
         const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
         audio.play().catch(() => {});
-      }
-    };
+      })
+      .subscribe();
 
-    return () => ws.close();
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [navigate]);
+
+  const calculateAnalytics = (orders: Order[]) => {
+    const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
+    const orderCount = orders.length;
+
+    // Top Products
+    const productMap: Record<string, number> = {};
+    orders.forEach(o => {
+      o.items.forEach(i => {
+        productMap[i.name] = (productMap[i.name] || 0) + i.quantity;
+      });
+    });
+    const bestSellers = Object.entries(productMap)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3);
+
+    // Top Clients
+    const clientMap: Record<string, { name: string, total: number }> = {};
+    orders.forEach(o => {
+      if (!clientMap[o.phone]) {
+        clientMap[o.phone] = { name: o.name, total: 0 };
+      }
+      clientMap[o.phone].total += o.total;
+    });
+    const topClients = Object.entries(clientMap)
+      .map(([phone, data]) => ({ phone, ...data }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 3);
+
+    // Top Delivery Person
+    const livreurMap: Record<string, number> = {};
+    orders.forEach(o => {
+      if (o.livreurName) {
+        livreurMap[o.livreurName] = (livreurMap[o.livreurName] || 0) + 1;
+      }
+    });
+    const topLivreurs = Object.entries(livreurMap)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3);
+
+    return { totalRevenue, orderCount, bestSellers, topClients, topLivreurs };
+  };
+
+  const fetchData = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .order('createdAt', { ascending: false });
+
+      if (error) throw error;
+      setOrders(data || []);
+      setAnalytics(calculateAnalytics(data || []));
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const exportToPDF = () => {
     const doc = new jsPDF();
@@ -102,7 +149,7 @@ export default function AdminDashboard() {
     // Table
     const tableData = orders.map(o => [
       format(new Date(o.createdAt), "dd/MM HH:mm"),
-      o.customerName || o.customerPhone,
+      o.name || o.phone,
       o.items.map(i => `${i.name} x${i.quantity}`).join(", "),
       `${o.total} MAD`
     ]);
@@ -190,7 +237,7 @@ export default function AdminDashboard() {
           />
           <StatCard 
             title="CLIENTS" 
-            value={new Set(orders.map(o => o.customerPhone)).size} 
+            value={new Set(orders.map(o => o.phone)).size} 
             icon={<Users className="text-purple-500" />} 
           />
           <StatCard 
@@ -229,9 +276,9 @@ export default function AdminDashboard() {
                   {orders.map(order => (
                     <tr key={order.id} className="hover:bg-white/5 transition-colors">
                       <td className="px-6 py-4">
-                        <div className="font-black text-[#FFD000]">{order.customerName}</div>
-                        <div className="font-bold text-xs">{order.customerPhone}</div>
-                        <div className="text-[10px] text-gray-500 truncate max-w-[200px]">{order.customerAddress}</div>
+                        <div className="font-black text-[#FFD000]">{order.name}</div>
+                        <div className="font-bold text-xs">{order.phone}</div>
+                        <div className="text-[10px] text-gray-500 truncate max-w-[200px]">Localisation GPS</div>
                       </td>
                       <td className="px-6 py-4">
                         <div className="text-sm font-medium">
@@ -277,6 +324,54 @@ export default function AdminDashboard() {
             </section>
 
             <section>
+              <h2 className="text-2xl font-black tracking-tighter mb-6">TOP 3 CLIENTS</h2>
+              <div className="space-y-4">
+                {analytics?.topClients.map((client, i) => (
+                  <div key={client.phone} className="bg-white/5 border border-white/10 rounded-2xl p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className={cn(
+                        "w-8 h-8 rounded-lg flex items-center justify-center font-black text-sm",
+                        i === 0 ? "bg-[#FFD000] text-black" : "bg-white/10 text-white"
+                      )}>
+                        {i + 1}
+                      </div>
+                      <div>
+                        <p className="font-bold">{client.name}</p>
+                        <p className="text-[10px] text-gray-500 font-bold">{client.phone}</p>
+                      </div>
+                    </div>
+                    <span className="text-sm font-black text-[#FFD000]">{client.total.toFixed(2)} MAD</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section>
+              <h2 className="text-2xl font-black tracking-tighter mb-6">TOP LIVREURS</h2>
+              <div className="space-y-4">
+                {analytics?.topLivreurs.map((livreur, i) => (
+                  <div key={livreur.name} className="bg-white/5 border border-white/10 rounded-2xl p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className={cn(
+                        "w-8 h-8 rounded-lg flex items-center justify-center font-black text-sm",
+                        i === 0 ? "bg-[#FFD000] text-black" : "bg-white/10 text-white"
+                      )}>
+                        {i + 1}
+                      </div>
+                      <span className="font-bold">{livreur.name}</span>
+                    </div>
+                    <span className="text-sm font-black text-gray-500">{livreur.count} livraisons</span>
+                  </div>
+                ))}
+                {analytics?.topLivreurs.length === 0 && (
+                  <p className="text-center text-gray-500 font-medium py-4 border-2 border-dashed border-white/5 rounded-2xl">
+                    Aucun livreur actif
+                  </p>
+                )}
+              </div>
+            </section>
+
+            <section>
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-black tracking-tighter">NOTIFICATIONS</h2>
                 <button 
@@ -302,9 +397,9 @@ export default function AdminDashboard() {
                         </div>
                         <span className="text-[10px] font-black opacity-50">MAINTENANT</span>
                       </div>
-                      <p className="text-xs font-black mb-1">{notif.customerName}</p>
-                      <p className="text-[10px] font-bold opacity-80">{notif.customerPhone}</p>
-                      <p className="text-[10px] font-medium opacity-70 truncate">{notif.customerAddress}</p>
+                      <p className="text-xs font-black mb-1">{notif.name}</p>
+                      <p className="text-[10px] font-bold opacity-80">{notif.phone}</p>
+                      <p className="text-[10px] font-medium opacity-70 truncate">Localisation GPS</p>
                     </motion.div>
                   ))}
                 </AnimatePresence>

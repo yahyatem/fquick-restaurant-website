@@ -4,20 +4,39 @@ import { Plus, Star } from "lucide-react";
 import { MENU_DATA, CATEGORIES } from "../constants";
 import { MenuItem } from "../types";
 import { cn } from "../lib/utils";
+import { supabase } from "../lib/supabase";
 
 export default function Menu({ onAddToCart }: { onAddToCart: (item: MenuItem) => void }) {
   const [activeCategory, setActiveCategory] = useState(CATEGORIES[0]);
   const [bestSellers, setBestSellers] = useState<string[]>([]);
 
   useEffect(() => {
-    fetch("/api/analytics")
-      .then(res => res.json())
-      .then(data => {
-        if (data.bestSellers) {
-          setBestSellers(data.bestSellers.map((b: any) => b.name));
-        }
-      })
-      .catch(err => console.error("Error fetching analytics:", err));
+    const fetchAnalytics = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*');
+        
+        if (error) throw error;
+        
+        const productMap: Record<string, number> = {};
+        data?.forEach(o => {
+          o.items.forEach((i: any) => {
+            productMap[i.name] = (productMap[i.name] || 0) + i.quantity;
+          });
+        });
+        const bestSellersList = Object.entries(productMap)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([name]) => name);
+        
+        setBestSellers(bestSellersList);
+      } catch (err) {
+        console.error("Error fetching analytics:", err);
+      }
+    };
+
+    fetchAnalytics();
   }, []);
 
   const filteredMenu = MENU_DATA.filter(item => item.category === activeCategory);
