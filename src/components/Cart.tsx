@@ -84,15 +84,20 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
     };
 
     try {
-      const { data, error } = await supabase
+      const { data, error: supabaseError } = await supabase
         .from('orders')
         .insert([orderData])
         .select()
         .single();
 
-      if (error) {
-        console.error("Supabase insert error:", error);
-        throw error;
+      if (supabaseError) {
+        console.error("Supabase insert error details:", {
+          message: supabaseError.message,
+          details: supabaseError.details,
+          hint: supabaseError.hint,
+          code: supabaseError.code
+        });
+        throw supabaseError;
       }
 
       setIsSuccess(true);
@@ -109,8 +114,8 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
         }
       }, 2000);
     } catch (err) {
-      console.error("Order saving failed:", err);
-      setError("Une erreur est survenue lors de la validation de votre commande. Veuillez réessayer.");
+      console.error("Order submission failed:", err);
+      setError("Une erreur est survenue lors de la validation de votre commande. Veuillez vérifier votre connexion et réessayer.");
     } finally {
       setIsOrdering(false);
     }
