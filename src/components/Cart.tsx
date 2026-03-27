@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { X, Plus, Minus, Send, ShoppingBag, MapPin, Sparkles } from "lucide-react";
 import { CartItem, MenuItem } from "../types";
@@ -20,11 +21,13 @@ interface CartProps {
 }
 
 export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, onAddToCart }: CartProps) {
+  const navigate = useNavigate();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [isOrdering, setIsOrdering] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
@@ -67,6 +70,7 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
     }
 
     setIsOrdering(true);
+    setError(null);
 
     const orderData = {
       customer_name: name,
@@ -99,14 +103,14 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
         setIsModalOpen(false);
         onClose();
         if (data?.id) {
-          window.location.href = `/tracking/${data.id}`;
+          navigate(`/tracking/${data.id}`);
         } else {
-          window.location.href = "/";
+          navigate("/");
         }
       }, 2000);
     } catch (err) {
       console.error("Order saving failed:", err);
-      alert("Une erreur est survenue lors de la validation de votre commande. Veuillez vérifier la console pour plus de détails.");
+      setError("Une erreur est survenue lors de la validation de votre commande. Veuillez réessayer.");
     } finally {
       setIsOrdering(false);
     }
@@ -318,6 +322,11 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
                     >
                       {isOrdering ? "CHARGEMENT..." : "CONFIRMER LA COMMANDE"}
                     </button>
+                    {error && (
+                      <p className="text-red-500 text-xs font-bold text-center animate-pulse">
+                        {error}
+                      </p>
+                    )}
                     <button
                       onClick={() => setIsModalOpen(false)}
                       disabled={isOrdering}
