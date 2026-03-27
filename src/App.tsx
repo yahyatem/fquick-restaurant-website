@@ -11,7 +11,9 @@ import Contact from "./components/Contact";
 import AdminLogin from "./components/AdminLogin";
 import AdminDashboard from "./components/AdminDashboard";
 import LivreurLogin from "./components/LivreurLogin";
+import LivreurRegistration from "./components/LivreurRegistration";
 import LivreurPage from "./components/LivreurPage";
+import TrackingPage from "./components/TrackingPage";
 import { cn } from "./lib/utils";
 
 function Navbar({ cartCount, onOpenCart }: { cartCount: number; onOpenCart: () => void }) {
@@ -20,6 +22,7 @@ function Navbar({ cartCount, onOpenCart }: { cartCount: number; onOpenCart: () =
   const location = useLocation();
   const isAdminPage = location.pathname.startsWith("/admin");
   const isLivreurPage = location.pathname.startsWith("/livreur");
+  const isTrackingPage = location.pathname.startsWith("/tracking");
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 20);
@@ -27,7 +30,7 @@ function Navbar({ cartCount, onOpenCart }: { cartCount: number; onOpenCart: () =
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  if (isAdminPage || isLivreurPage) return null;
+  if (isAdminPage || isLivreurPage || isTrackingPage) return null;
 
   return (
     <nav className={cn(
@@ -165,7 +168,9 @@ export default function App() {
           <Route path="/admin/login" element={<AdminLogin />} />
           <Route path="/admin" element={<AdminDashboard />} />
           <Route path="/livreur/login" element={<LivreurLogin />} />
+          <Route path="/livreur/register" element={<LivreurRegistration />} />
           <Route path="/livreur" element={<LivreurPage />} />
+          <Route path="/tracking/:id" element={<TrackingPage />} />
         </Routes>
 
         <Footer />

@@ -69,22 +69,27 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
     setIsOrdering(true);
 
     const orderData = {
-      name,
-      phone,
+      customer_name: name,
+      customer_phone: phone,
       latitude: location.lat,
       longitude: location.lng,
       total,
       status: 'pending',
       items: items.map(i => ({ name: i.name, quantity: i.quantity, price: i.price })),
-      createdAt: new Date().toISOString(),
+      created_at: new Date().toISOString(),
     };
 
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('orders')
-        .insert([orderData]);
+        .insert([orderData])
+        .select()
+        .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error("Supabase insert error:", error);
+        throw error;
+      }
 
       setIsSuccess(true);
       onClearCart();
@@ -93,11 +98,15 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
         setIsSuccess(false);
         setIsModalOpen(false);
         onClose();
-        window.location.href = "/";
+        if (data?.id) {
+          window.location.href = `/tracking/${data.id}`;
+        } else {
+          window.location.href = "/";
+        }
       }, 2000);
     } catch (err) {
       console.error("Order saving failed:", err);
-      alert("Une erreur est survenue lors de la validation de votre commande.");
+      alert("Une erreur est survenue lors de la validation de votre commande. Veuillez vérifier la console pour plus de détails.");
     } finally {
       setIsOrdering(false);
     }

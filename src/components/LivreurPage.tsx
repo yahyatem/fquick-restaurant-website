@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bike, MapPin, Phone, CheckCircle, Clock, ExternalLink, LogOut, Navigation } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { Bike, MapPin, Phone, Package, LogOut, CheckCircle2, Clock, ExternalLink, ArrowRight } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { Order } from "../types";
 import { format } from "date-fns";
@@ -10,6 +10,8 @@ import { fr } from "date-fns/locale";
 export default function LivreurPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [livreurName, setLivreurName] = useState("");
+  const [livreurId, setLivreurId] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -18,12 +20,13 @@ export default function LivreurPage() {
       navigate("/livreur/login");
       return;
     }
-
+    setLivreurName(localStorage.getItem("livreur_name") || "Livreur");
+    setLivreurId(localStorage.getItem("livreur_id") || "");
     fetchOrders();
 
     // Real-time subscription
     const subscription = supabase
-      .channel('orders_changes')
+      .channel('livreur_orders')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
         fetchOrders();
       })
@@ -39,8 +42,7 @@ export default function LivreurPage() {
       const { data, error } = await supabase
         .from('orders')
         .select('*')
-        .eq('status', 'pending')
-        .order('createdAt', { ascending: false });
+        .order('created_at', { ascending: false });
 
       if (error) throw error;
       setOrders(data || []);
@@ -51,153 +53,228 @@ export default function LivreurPage() {
     }
   };
 
-  const updateStatus = async (orderId: string, status: string) => {
+  const handleLogout = () => {
+    localStorage.removeItem("livreur_authenticated");
+    localStorage.removeItem("livreur_name");
+    localStorage.removeItem("livreur_phone");
+    localStorage.removeItem("livreur_id");
+    navigate("/livreur/login");
+  };
+
+  const updateOrderStatus = async (orderId: string, newStatus: string) => {
     try {
-      const order = orders.find(o => o.id === orderId);
+      const updateData: any = { status: newStatus };
+      
+      // If accepting, assign the livreur
+      if (newStatus === 'accepted') {
+        updateData.livreur_id = livreurId;
+        updateData.livreur_name = livreurName;
+      }
+
       const { error } = await supabase
         .from('orders')
-        .update({ status, livreurName: 'Livreur F-Quick' }) // Hardcoded for demo
+        .update(updateData)
         .eq('id', orderId);
 
       if (error) throw error;
       
-      if (status === 'accepted' && order?.latitude && order?.longitude) {
-        window.open(`https://www.google.com/maps?q=${order.latitude},${order.longitude}`, '_blank');
+      // If accepted, open Google Maps
+      if (newStatus === 'accepted') {
+        const order = orders.find(o => o.id === orderId);
+        if (order?.latitude && order?.longitude) {
+          window.open(`https://www.google.com/maps?q=${order.latitude},${order.longitude}`, '_blank');
+        }
       }
       
       fetchOrders();
     } catch (err) {
       console.error("Error updating status:", err);
+      alert("Une erreur est survenue.");
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem("livreur_authenticated");
-    navigate("/livreur/login");
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'pending': return 'bg-orange-500/20 text-orange-500 border-orange-500/30';
-      case 'accepted': return 'bg-blue-500/20 text-blue-500 border-blue-500/30';
-      case 'delivered': return 'bg-green-500/20 text-green-500 border-green-500/30';
-      default: return 'bg-gray-500/20 text-gray-500 border-gray-500/30';
-    }
-  };
-
-  const getGoogleMapsLink = (order: Order) => {
-    if (order.latitude && order.longitude) {
-      return `https://www.google.com/maps?q=${order.latitude},${order.longitude}`;
-    }
-    return `https://www.google.com/maps/search/${encodeURIComponent(order.name)}`;
-  };
+  const pendingOrders = orders.filter(o => o.status === 'pending');
+  const myOrders = orders.filter(o => o.livreur_id === livreurId && o.status !== 'delivered');
 
   return (
     <div className="min-h-screen bg-black text-white p-6 pb-24">
-      <header className="max-w-4xl mx-auto flex items-center justify-between mb-8">
+      <header className="max-w-4xl mx-auto flex items-center justify-between mb-12">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-[#FFD000] rounded-xl flex items-center justify-center rotate-3">
-            <Bike className="text-black" size={24} />
+          <div className="w-12 h-12 bg-[#FFD000] rounded-2xl flex items-center justify-center rotate-3">
+            <Bike className="text-black" size={24} strokeWidth={2.5} />
           </div>
           <div>
-            <h1 className="text-2xl font-black tracking-tighter">LIVREUR F-QUICK</h1>
-            <p className="text-gray-400 text-sm font-bold">Commandes en cours</p>
+            <h1 className="text-2xl font-black tracking-tighter uppercase italic">F-QUICK DELIVERY</h1>
+            <p className="text-gray-500 text-xs font-black tracking-widest uppercase">Bonjour, {livreurName}</p>
           </div>
         </div>
         <button 
           onClick={handleLogout}
-          className="p-3 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-colors"
+          className="p-3 bg-white/5 hover:bg-red-500/10 hover:text-red-500 rounded-2xl transition-all group"
         >
-          <LogOut size={20} />
+          <LogOut size={20} className="group-hover:-translate-x-1 transition-transform" />
         </button>
       </header>
 
-      <main className="max-w-4xl mx-auto space-y-6">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-4">
-            <div className="w-12 h-12 border-4 border-[#FFD000] border-t-transparent rounded-full animate-spin" />
-            <p className="text-gray-400 font-bold">Chargement des commandes...</p>
-          </div>
-        ) : orders.length === 0 ? (
-          <div className="text-center py-20 bg-[#111] border border-white/10 rounded-3xl">
-            <Bike className="mx-auto text-gray-600 mb-4" size={48} />
-            <p className="text-gray-400 font-bold">Aucune commande pour le moment</p>
-          </div>
-        ) : (
-          <div className="grid gap-6">
-            {orders.map((order) => (
-              <motion.div
-                key={order.id}
-                layout
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-[#111] border border-white/10 rounded-3xl p-6 shadow-xl"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
-                  <div>
-                    <div className="flex items-center gap-3 mb-2">
-                      <span className="text-xs font-black text-gray-500 uppercase tracking-widest">#{order.id.slice(0, 8)}</span>
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase border ${getStatusColor(order.status)}`}>
-                        {order.status === 'pending' ? 'En attente' : order.status === 'accepted' ? 'Acceptée' : 'Livrée'}
-                      </span>
-                    </div>
-                    <h3 className="text-xl font-black">{order.name}</h3>
-                    <p className="text-gray-400 font-bold flex items-center gap-2 mt-1">
-                      <Phone size={14} /> {order.phone}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-2xl font-black text-[#FFD000]">{order.total.toFixed(2)} MAD</p>
-                    <p className="text-gray-500 text-xs font-bold flex items-center justify-end gap-1 mt-1">
-                      <Clock size={12} /> {format(new Date(order.createdAt), "HH:mm", { locale: fr })}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="space-y-4 mb-8">
-                  <div className="flex items-start gap-3 bg-black/40 p-4 rounded-2xl border border-white/5">
-                    <MapPin className="text-[#FFD000] shrink-0 mt-1" size={18} />
-                    <div className="flex-1">
-                      <p className="text-sm font-bold text-gray-300">Localisation GPS</p>
-                      <a 
-                        href={getGoogleMapsLink(order)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-2 text-[#FFD000] text-xs font-black mt-2 hover:underline"
-                      >
-                        <Navigation size={12} /> VOIR SUR GOOGLE MAPS <ExternalLink size={10} />
-                      </a>
-                    </div>
-                  </div>
-
-                  <div className="bg-black/20 p-4 rounded-2xl border border-white/5">
-                    <p className="text-xs font-black text-gray-500 uppercase mb-3 tracking-widest">Articles</p>
-                    <div className="space-y-2">
-                      {order.items.map((item, idx) => (
-                        <div key={idx} className="flex justify-between text-sm font-bold">
-                          <span>{item.quantity}x {item.name}</span>
-                          <span className="text-gray-400">{(item.price * item.quantity).toFixed(2)} MAD</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex gap-3">
-                  {order.status === 'pending' && (
-                    <button
-                      onClick={() => updateStatus(order.id, 'accepted')}
-                      className="flex-1 bg-white text-black font-black py-4 rounded-2xl hover:bg-[#FFD000] transition-colors flex items-center justify-center gap-2"
-                    >
-                      CONFIRMER
-                    </button>
-                  )}
-                </div>
-              </motion.div>
-            ))}
-          </div>
+      <main className="max-w-4xl mx-auto space-y-12">
+        {/* Mes Livraisons en cours */}
+        {myOrders.length > 0 && (
+          <section className="space-y-6">
+            <div className="flex items-center gap-3">
+              <div className="w-2 h-8 bg-[#FFD000] rounded-full" />
+              <h2 className="text-xl font-black tracking-tight uppercase italic">MES LIVRAISONS EN COURS</h2>
+              <span className="bg-[#FFD000] text-black px-2 py-0.5 rounded text-[10px] font-black">{myOrders.length}</span>
+            </div>
+            <div className="grid gap-4">
+              {myOrders.map(order => (
+                <OrderCard 
+                  key={order.id} 
+                  order={order} 
+                  isMyOrder={true}
+                  onUpdateStatus={updateOrderStatus}
+                />
+              ))}
+            </div>
+          </section>
         )}
+
+        {/* Commandes Disponibles */}
+        <section className="space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="w-2 h-8 bg-white/20 rounded-full" />
+            <h2 className="text-xl font-black tracking-tight uppercase italic">COMMANDES DISPONIBLES</h2>
+            <span className="bg-white/10 text-white px-2 py-0.5 rounded text-[10px] font-black">{pendingOrders.length}</span>
+          </div>
+          
+          {loading ? (
+            <div className="flex justify-center py-12">
+              <div className="w-8 h-8 border-2 border-[#FFD000] border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : pendingOrders.length === 0 ? (
+            <div className="bg-[#111] border border-dashed border-white/10 rounded-[40px] p-12 text-center">
+              <Package size={48} className="text-gray-800 mx-auto mb-4" />
+              <p className="text-gray-500 font-black uppercase tracking-widest text-sm">Aucune commande disponible</p>
+            </div>
+          ) : (
+            <div className="grid gap-4">
+              {pendingOrders.map(order => (
+                <OrderCard 
+                  key={order.id} 
+                  order={order} 
+                  isMyOrder={false}
+                  onUpdateStatus={updateOrderStatus}
+                />
+              ))}
+            </div>
+          )}
+        </section>
       </main>
     </div>
+  );
+}
+
+const OrderCard: React.FC<{ 
+  order: Order, 
+  isMyOrder: boolean,
+  onUpdateStatus: (id: string, status: string) => void | Promise<void>
+}> = ({ order, isMyOrder, onUpdateStatus }) => {
+  return (
+    <motion.div 
+      layout
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={`bg-[#111] border ${isMyOrder ? 'border-[#FFD000]/30' : 'border-white/10'} rounded-[32px] overflow-hidden shadow-xl`}
+    >
+      <div className="p-6 flex flex-col md:flex-row gap-6">
+        <div className="flex-1 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-white/5 rounded-xl">
+                <Clock size={16} className="text-[#FFD000]" />
+              </div>
+              <span className="text-xs font-black text-gray-500 uppercase tracking-widest">
+                {format(new Date(order.created_at), "HH:mm", { locale: fr })}
+              </span>
+            </div>
+            <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
+              order.status === 'pending' ? 'bg-blue-500/10 text-blue-500' :
+              order.status === 'accepted' ? 'bg-[#FFD000]/10 text-[#FFD000]' :
+              'bg-orange-500/10 text-orange-500'
+            }`}>
+              {order.status}
+            </span>
+          </div>
+
+          <div>
+            <h3 className="text-xl font-black mb-1">{order.customer_name}</h3>
+            <div className="flex items-center gap-2 text-gray-500">
+              <MapPin size={14} />
+              <span className="text-xs font-bold">Localisation GPS partagée</span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {order.items.map((item, i) => (
+              <span key={i} className="bg-white/5 px-3 py-1 rounded-lg text-[10px] font-bold">
+                {item.quantity}x {item.name}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col justify-between gap-4 md:w-48">
+          <div className="text-right">
+            <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Total</p>
+            <p className="text-2xl font-black text-[#FFD000]">{order.total.toFixed(2)} MAD</p>
+          </div>
+
+          <div className="space-y-2">
+            {!isMyOrder ? (
+              <button 
+                onClick={() => onUpdateStatus(order.id, 'accepted')}
+                className="w-full bg-[#FFD000] text-black py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:scale-105 transition-transform"
+              >
+                ACCEPTER <ArrowRight size={16} />
+              </button>
+            ) : (
+              <>
+                {order.status === 'accepted' && (
+                  <button 
+                    onClick={() => onUpdateStatus(order.id, 'en livraison')}
+                    className="w-full bg-orange-500 text-white py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:scale-105 transition-transform"
+                  >
+                    EN LIVRAISON <Bike size={16} />
+                  </button>
+                )}
+                {order.status === 'en livraison' && (
+                  <button 
+                    onClick={() => onUpdateStatus(order.id, 'delivered')}
+                    className="w-full bg-green-500 text-white py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:scale-105 transition-transform"
+                  >
+                    LIVRÉ <CheckCircle2 size={16} />
+                  </button>
+                )}
+                <div className="flex gap-2">
+                  <a 
+                    href={`tel:${order.customer_phone}`}
+                    className="flex-1 bg-white/5 text-white py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:bg-white/10 transition-colors"
+                  >
+                    <Phone size={16} />
+                  </a>
+                  <a 
+                    href={`https://www.google.com/maps?q=${order.latitude},${order.longitude}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 bg-white/5 text-white py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:bg-white/10 transition-colors"
+                  >
+                    <ExternalLink size={16} />
+                  </a>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </motion.div>
   );
 }

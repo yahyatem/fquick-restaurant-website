@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { 
   LayoutDashboard, 
   ShoppingBag, 
@@ -12,7 +12,9 @@ import {
   Search,
   CheckCircle2,
   Clock,
-  FileText
+  FileText,
+  ExternalLink,
+  User
 } from "lucide-react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -84,10 +86,10 @@ export default function AdminDashboard() {
     // Top Clients
     const clientMap: Record<string, { name: string, total: number }> = {};
     orders.forEach(o => {
-      if (!clientMap[o.phone]) {
-        clientMap[o.phone] = { name: o.name, total: 0 };
+      if (!clientMap[o.customer_phone]) {
+        clientMap[o.customer_phone] = { name: o.customer_name, total: 0 };
       }
-      clientMap[o.phone].total += o.total;
+      clientMap[o.customer_phone].total += o.total;
     });
     const topClients = Object.entries(clientMap)
       .map(([phone, data]) => ({ phone, ...data }))
@@ -97,8 +99,8 @@ export default function AdminDashboard() {
     // Top Delivery Person
     const livreurMap: Record<string, number> = {};
     orders.forEach(o => {
-      if (o.livreurName) {
-        livreurMap[o.livreurName] = (livreurMap[o.livreurName] || 0) + 1;
+      if (o.livreur_name) {
+        livreurMap[o.livreur_name] = (livreurMap[o.livreur_name] || 0) + 1;
       }
     });
     const topLivreurs = Object.entries(livreurMap)
@@ -114,7 +116,7 @@ export default function AdminDashboard() {
       const { data, error } = await supabase
         .from('orders')
         .select('*')
-        .order('createdAt', { ascending: false });
+        .order('created_at', { ascending: false });
 
       if (error) throw error;
       setOrders(data || []);
@@ -148,8 +150,8 @@ export default function AdminDashboard() {
 
     // Table
     const tableData = orders.map(o => [
-      format(new Date(o.createdAt), "dd/MM HH:mm"),
-      o.name || o.phone,
+      format(new Date(o.created_at), "dd/MM HH:mm"),
+      o.customer_name || o.customer_phone,
       o.items.map(i => `${i.name} x${i.quantity}`).join(", "),
       `${o.total} MAD`
     ]);
@@ -237,7 +239,7 @@ export default function AdminDashboard() {
           />
           <StatCard 
             title="CLIENTS" 
-            value={new Set(orders.map(o => o.phone)).size} 
+            value={new Set(orders.map(o => o.customer_phone)).size} 
             icon={<Users className="text-purple-500" />} 
           />
           <StatCard 
@@ -270,14 +272,15 @@ export default function AdminDashboard() {
                     <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">ARTICLES</th>
                     <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">TOTAL</th>
                     <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">DATE</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest text-right">ACTIONS</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {orders.map(order => (
                     <tr key={order.id} className="hover:bg-white/5 transition-colors">
                       <td className="px-6 py-4">
-                        <div className="font-black text-[#FFD000]">{order.name}</div>
-                        <div className="font-bold text-xs">{order.phone}</div>
+                        <div className="font-black text-[#FFD000]">{order.customer_name}</div>
+                        <div className="font-bold text-xs">{order.customer_phone}</div>
                         <div className="text-[10px] text-gray-500 truncate max-w-[200px]">Localisation GPS</div>
                       </td>
                       <td className="px-6 py-4">
@@ -291,7 +294,18 @@ export default function AdminDashboard() {
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2 text-xs text-gray-500 font-bold">
                           <Clock size={12} />
-                          {format(new Date(order.createdAt), "HH:mm", { locale: fr })}
+                          {format(new Date(order.created_at), "HH:mm", { locale: fr })}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <Link 
+                            to={`/tracking/${order.id}`}
+                            className="p-2 bg-white/5 hover:bg-[#FFD000] hover:text-black rounded-lg transition-all"
+                            title="Suivre la commande"
+                          >
+                            <ExternalLink size={14} />
+                          </Link>
                         </div>
                       </td>
                     </tr>
@@ -397,8 +411,8 @@ export default function AdminDashboard() {
                         </div>
                         <span className="text-[10px] font-black opacity-50">MAINTENANT</span>
                       </div>
-                      <p className="text-xs font-black mb-1">{notif.name}</p>
-                      <p className="text-[10px] font-bold opacity-80">{notif.phone}</p>
+                      <p className="text-xs font-black mb-1">{notif.customer_name}</p>
+                      <p className="text-[10px] font-bold opacity-80">{notif.customer_phone}</p>
                       <p className="text-[10px] font-medium opacity-70 truncate">Localisation GPS</p>
                     </motion.div>
                   ))}
