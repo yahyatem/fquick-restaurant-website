@@ -198,22 +198,52 @@ export default function AdminDashboard() {
   const exportToPDF = () => {
     const doc = new jsPDF();
     const dateStr = format(new Date(), "dd/MM/yyyy HH:mm");
+    const brandColor: [number, number, number] = [255, 208, 0]; // #FFD000
+    const darkColor: [number, number, number] = [17, 17, 17]; // #111111
 
-    // Header
-    doc.setFontSize(22);
-    doc.setTextColor(34, 197, 94); // #22c55e (Green-500)
-    doc.text("F-QUICK", 14, 20);
+    // Header Background
+    doc.setFillColor(darkColor[0], darkColor[1], darkColor[2]);
+    doc.rect(0, 0, 210, 45, 'F');
+
+    // Title
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(28);
+    doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
+    doc.text("F-QUICK", 14, 25);
     
+    // Subtitle
     doc.setFontSize(14);
-    doc.setTextColor(100);
-    doc.text("Rapport des Commandes", 14, 30);
-    doc.text(`Généré le: ${dateStr}`, 14, 38);
+    doc.setTextColor(255, 255, 255);
+    doc.text("Rapport des Commandes", 14, 35);
 
-    // Summary Stats
-    doc.setFontSize(12);
-    doc.setTextColor(0);
-    doc.text(`Total Commandes: ${analytics?.orderCount || 0}`, 14, 50);
-    doc.text(`Revenu Total: ${analytics?.totalRevenue || 0} MAD`, 14, 58);
+    // Date
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(150, 150, 150);
+    doc.text(`Généré le: ${dateStr}`, 196, 35, { align: "right" });
+
+    // Summary Section
+    // Total Orders Card
+    doc.setFillColor(245, 245, 245);
+    doc.roundedRect(14, 55, 85, 25, 3, 3, 'F');
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(100, 100, 100);
+    doc.text("TOTAL COMMANDES", 20, 63);
+    doc.setFontSize(18);
+    doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
+    doc.text(`${analytics?.orderCount || 0}`, 20, 74);
+
+    // Total Revenue Card
+    doc.setFillColor(245, 245, 245);
+    doc.roundedRect(111, 55, 85, 25, 3, 3, 'F');
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(100, 100, 100);
+    doc.text("REVENU TOTAL", 117, 63);
+    doc.setFontSize(18);
+    doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
+    doc.text(`${analytics?.totalRevenue || 0} MAD`, 117, 74);
 
     // Table
     const tableData = orders.map(o => [
@@ -224,12 +254,31 @@ export default function AdminDashboard() {
     ]);
 
     autoTable(doc, {
-      startY: 70,
+      startY: 95,
       head: [["Date", "Client", "Articles", "Total"]],
       body: tableData,
-      headStyles: { fillColor: [34, 197, 94], textColor: [255, 255, 255] },
-      alternateRowStyles: { fillColor: [245, 245, 245] },
-      margin: { top: 70 },
+      headStyles: { 
+        fillColor: darkColor, 
+        textColor: brandColor,
+        fontSize: 10,
+        fontStyle: 'bold',
+        halign: 'left'
+      },
+      bodyStyles: {
+        fontSize: 9,
+        textColor: [50, 50, 50],
+        cellPadding: 5
+      },
+      columnStyles: {
+        3: { halign: 'right', fontStyle: 'bold' }
+      },
+      alternateRowStyles: { fillColor: [252, 252, 252] },
+      margin: { left: 14, right: 14 },
+      theme: 'striped',
+      styles: {
+        overflow: 'linebreak',
+        cellWidth: 'auto'
+      }
     });
 
     doc.save(`fquick_orders_${format(new Date(), "yyyy-MM-dd")}.pdf`);
