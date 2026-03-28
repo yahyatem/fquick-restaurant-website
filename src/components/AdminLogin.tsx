@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Lock, ArrowRight } from "lucide-react";
 import { motion } from "motion/react";
 
@@ -7,6 +7,8 @@ export default function AdminLogin() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const isExpired = searchParams.get("expired") === "true";
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,6 +34,12 @@ export default function AdminLogin() {
           <h1 className="text-3xl font-black tracking-tighter mb-2">ADMINISTRATION</h1>
           <p className="text-gray-500 font-medium">Veuillez vous connecter pour accéder au tableau de bord.</p>
         </div>
+
+        {isExpired && (
+          <div className="bg-orange-500/10 border border-orange-500/50 text-orange-500 p-4 rounded-2xl text-xs font-black text-center uppercase tracking-widest mb-6">
+            Session expirée, veuillez vous reconnecter
+          </div>
+        )}
 
         <form onSubmit={handleLogin} className="space-y-6">
           <div>

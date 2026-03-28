@@ -253,10 +253,46 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = (isExpired = false) => {
     localStorage.removeItem("admin_token");
-    navigate("/admin/login");
+    if (isExpired) {
+      navigate("/admin/login?expired=true");
+    } else {
+      navigate("/admin/login");
+    }
   };
+
+  useEffect(() => {
+    const INACTIVITY_TIMEOUT = 600000; // 10 minutes
+    let timeoutId: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        handleLogout(true);
+      }, INACTIVITY_TIMEOUT);
+    };
+
+    const handleActivity = () => {
+      resetTimer();
+    };
+
+    // Initial timer
+    resetTimer();
+
+    // Events to track
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
+    events.forEach(event => {
+      window.addEventListener(event, handleActivity);
+    });
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      events.forEach(event => {
+        window.removeEventListener(event, handleActivity);
+      });
+    };
+  }, [navigate]);
 
   if (isLoading) return (
     <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center">
