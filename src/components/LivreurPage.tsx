@@ -136,27 +136,27 @@ export default function LivreurPage() {
   const historyOrders = orders.filter(o => o.livreur_id === livreurId && (o.status === 'delivered' || o.status === 'cancelled'));
 
   return (
-    <div className="min-h-screen bg-black text-white p-6 pb-32">
-      <header className="max-w-4xl mx-auto flex items-center justify-between mb-12">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-[#FFD000] rounded-2xl flex items-center justify-center rotate-3 shadow-lg shadow-[#FFD000]/20">
-            <Truck className="text-black" size={24} strokeWidth={2.5} />
+    <div className="min-h-screen bg-black text-white p-4 sm:p-6 pb-32">
+      <header className="max-w-4xl mx-auto flex items-center justify-between mb-8 sm:mb-12">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#FFD000] rounded-xl sm:rounded-2xl flex items-center justify-center rotate-3 shadow-lg shadow-[#FFD000]/20">
+            <Truck className="text-black" size={20} sm:size={24} strokeWidth={2.5} />
           </div>
           <div>
-            <h1 className="text-2xl font-black tracking-tighter uppercase italic">F-QUICK DELIVERY</h1>
-            <p className="text-gray-500 text-[10px] font-black tracking-widest uppercase">Bonjour, {livreur?.full_name || "Livreur"}</p>
+            <h1 className="text-lg sm:text-2xl font-black tracking-tighter uppercase italic">F-QUICK DELIVERY</h1>
+            <p className="text-gray-500 text-[8px] sm:text-[10px] font-black tracking-widest uppercase">Bonjour, {livreur?.full_name || "Livreur"}</p>
           </div>
         </div>
         <button 
           onClick={handleLogout}
-          className="p-3 bg-white/5 hover:bg-red-500/10 hover:text-red-500 rounded-2xl transition-all group"
+          className="p-2.5 sm:p-3 bg-white/5 hover:bg-red-500/10 hover:text-red-500 rounded-xl sm:rounded-2xl transition-all group"
         >
-          <LogOut size={20} className="group-hover:-translate-x-1 transition-transform" />
+          <LogOut size={18} sm:size={20} className="group-hover:-translate-x-1 transition-transform" />
         </button>
       </header>
 
       <main className="max-w-4xl mx-auto">
-        <div className="flex gap-2 mb-12 overflow-x-auto pb-2 scrollbar-hide">
+        <div className="flex gap-2 mb-8 sm:mb-12 overflow-x-auto pb-2 scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0">
           <TabButton 
             active={activeTab === 'active'} 
             onClick={() => setActiveTab('active')} 
@@ -175,7 +175,7 @@ export default function LivreurPage() {
             active={activeTab === 'profile'} 
             onClick={() => setActiveTab('profile')} 
             icon={<User size={18} />} 
-            label="Mon Profil" 
+            label="Profil" 
           />
         </div>
 
@@ -295,32 +295,32 @@ export default function LivreurPage() {
               exit={{ opacity: 0, y: -20 }}
               className="max-w-md mx-auto"
             >
-              <div className="bg-[#111] border border-white/10 rounded-[40px] p-10 text-center shadow-2xl">
-                <div className="w-24 h-24 bg-[#FFD000] rounded-[32px] flex items-center justify-center text-black mx-auto mb-8 rotate-6 shadow-xl shadow-[#FFD000]/20">
-                  <User size={48} />
+              <div className="bg-[#111] border border-white/10 rounded-[32px] sm:rounded-[40px] p-6 sm:p-10 text-center shadow-2xl">
+                <div className="w-20 h-20 sm:w-24 sm:h-24 bg-[#FFD000] rounded-[28px] sm:rounded-[32px] flex items-center justify-center text-black mx-auto mb-6 sm:mb-8 rotate-6 shadow-xl shadow-[#FFD000]/20">
+                  <User size={40} sm:size={48} />
                 </div>
-                <h2 className="text-3xl font-black tracking-tighter mb-2 uppercase italic">{livreur?.full_name}</h2>
-                <p className="text-[#FFD000] font-black tracking-widest text-sm mb-10 uppercase">{livreur?.phone}</p>
+                <h2 className="text-2xl sm:text-3xl font-black tracking-tighter mb-2 uppercase italic">{livreur?.full_name}</h2>
+                <p className="text-[#FFD000] font-black tracking-widest text-xs sm:text-sm mb-8 sm:mb-10 uppercase">{livreur?.phone}</p>
                 
-                <div className="grid grid-cols-2 gap-4 mb-10">
-                  <div className="bg-black/40 rounded-3xl p-5 border border-white/5">
-                    <p className="text-[10px] font-black text-gray-500 uppercase mb-2">Total Livraisons</p>
-                    <p className="text-3xl font-black text-white">{historyOrders.filter(o => o.status === 'delivered').length}</p>
+                <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-8 sm:mb-10">
+                  <div className="bg-black/40 rounded-2xl sm:rounded-3xl p-4 sm:p-5 border border-white/5">
+                    <p className="text-[8px] sm:text-[10px] font-black text-gray-500 uppercase mb-1 sm:mb-2">Total Livraisons</p>
+                    <p className="text-2xl sm:text-3xl font-black text-white">{historyOrders.filter(o => o.status === 'delivered').length}</p>
                   </div>
-                  <div className="bg-black/40 rounded-3xl p-5 border border-white/5">
-                    <p className="text-[10px] font-black text-gray-500 uppercase mb-2">Statut</p>
-                    <p className="text-xs font-black text-green-500 uppercase">En Service</p>
+                  <div className="bg-black/40 rounded-2xl sm:rounded-3xl p-4 sm:p-5 border border-white/5">
+                    <p className="text-[8px] sm:text-[10px] font-black text-gray-500 uppercase mb-1 sm:mb-2">Statut</p>
+                    <p className="text-[10px] sm:text-xs font-black text-green-500 uppercase">En Service</p>
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between p-5 bg-black/40 rounded-2xl border border-white/5">
-                    <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">Membre depuis</span>
-                    <span className="text-xs font-black">{livreur ? format(new Date(livreur.created_at), "dd/MM/yyyy") : "-"}</span>
+                <div className="space-y-3 sm:space-y-4">
+                  <div className="flex items-center justify-between p-4 sm:p-5 bg-black/40 rounded-xl sm:rounded-2xl border border-white/5">
+                    <span className="text-[10px] sm:text-xs font-bold text-gray-500 uppercase tracking-widest">Membre depuis</span>
+                    <span className="text-[10px] sm:text-xs font-black">{livreur ? format(new Date(livreur.created_at), "dd/MM/yyyy") : "-"}</span>
                   </div>
-                  <div className="flex items-center justify-between p-5 bg-black/40 rounded-2xl border border-white/5">
-                    <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">ID Livreur</span>
-                    <span className="text-xs font-black">#{livreur?.id.slice(0, 8)}</span>
+                  <div className="flex items-center justify-between p-4 sm:p-5 bg-black/40 rounded-xl sm:rounded-2xl border border-white/5">
+                    <span className="text-[10px] sm:text-xs font-bold text-gray-500 uppercase tracking-widest">ID Livreur</span>
+                    <span className="text-[10px] sm:text-xs font-black">#{livreur?.id.slice(0, 8)}</span>
                   </div>
                 </div>
               </div>
@@ -337,14 +337,14 @@ function TabButton({ active, onClick, icon, label, count }: { active: boolean; o
     <button 
       onClick={onClick}
       className={cn(
-        "flex items-center gap-3 px-6 py-4 rounded-2xl font-black text-sm transition-all whitespace-nowrap",
+        "flex items-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm transition-all whitespace-nowrap",
         active ? "bg-[#FFD000] text-black shadow-lg shadow-[#FFD000]/20" : "bg-white/5 text-gray-500 hover:text-white hover:bg-white/10"
       )}
     >
       {icon} {label}
       {count !== undefined && (
         <span className={cn(
-          "px-2 py-0.5 rounded-lg text-[10px] font-black",
+          "px-1.5 sm:px-2 py-0.5 rounded-lg text-[8px] sm:text-[10px] font-black",
           active ? "bg-black/20" : "bg-white/10"
         )}>
           {count}
@@ -368,20 +368,20 @@ const OrderCard: React.FC<{
       layout
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`bg-[#111] border ${isMyOrder ? 'border-[#FFD000]/30' : 'border-white/10'} rounded-[32px] overflow-hidden shadow-xl`}
+      className={`bg-[#111] border ${isMyOrder ? 'border-[#FFD000]/30' : 'border-white/10'} rounded-[24px] sm:rounded-[32px] overflow-hidden shadow-xl`}
     >
-      <div className="p-6 flex flex-col md:flex-row gap-6">
-        <div className="flex-1 space-y-4">
+      <div className="p-4 sm:p-6 flex flex-col md:flex-row gap-4 sm:gap-6">
+        <div className="flex-1 space-y-3 sm:space-y-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-white/5 rounded-xl">
-                <Clock size={16} className="text-[#FFD000]" />
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="p-1.5 sm:p-2 bg-white/5 rounded-lg sm:rounded-xl">
+                <Clock size={14} sm:size={16} className="text-[#FFD000]" />
               </div>
-              <span className="text-xs font-black text-gray-500 uppercase tracking-widest">
+              <span className="text-[10px] sm:text-xs font-black text-gray-500 uppercase tracking-widest">
                 {format(new Date(order.created_at), "HH:mm", { locale: fr })}
               </span>
             </div>
-            <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
+            <span className={`px-2 sm:px-3 py-1 rounded-full text-[8px] sm:text-[10px] font-black uppercase tracking-widest ${
               order.status === 'pending' ? 'bg-blue-500/10 text-blue-500' :
               order.status === 'accepted' ? 'bg-[#FFD000]/10 text-[#FFD000]' :
               'bg-orange-500/10 text-orange-500'
@@ -391,33 +391,33 @@ const OrderCard: React.FC<{
           </div>
 
           <div>
-            <h3 className="text-xl font-black mb-1">{order.customer_name}</h3>
+            <h3 className="text-lg sm:text-xl font-black mb-1">{order.customer_name}</h3>
             <div className="flex items-center gap-2 text-gray-500">
-              <MapPin size={14} />
-              <span className="text-xs font-bold">Localisation GPS partagée</span>
+              <MapPin size={12} sm:size={14} />
+              <span className="text-[10px] sm:text-xs font-bold">Localisation GPS partagée</span>
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5 sm:gap-2">
             {order.order_items.map((item, i) => (
-              <span key={i} className="bg-white/5 px-3 py-1 rounded-lg text-[10px] font-bold">
+              <span key={i} className="bg-white/5 px-2 sm:px-3 py-1 rounded-lg text-[8px] sm:text-[10px] font-bold">
                 {item.quantity}x {item.product_name}
               </span>
             ))}
           </div>
         </div>
 
-        <div className="flex flex-col justify-between gap-4 md:w-48">
-          <div className="text-right">
-            <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Total</p>
-            <p className="text-2xl font-black text-[#FFD000]">{order.total.toFixed(2)} MAD</p>
+        <div className="flex flex-col justify-between gap-4 md:w-48 border-t md:border-t-0 border-white/5 pt-4 md:pt-0">
+          <div className="flex md:block justify-between items-center">
+            <p className="text-[8px] sm:text-[10px] font-black text-gray-500 uppercase tracking-widest">Total</p>
+            <p className="text-xl sm:text-2xl font-black text-[#FFD000]">{order.total.toFixed(2)} MAD</p>
           </div>
 
-          <div className="space-y-2">
+          <div className="grid grid-cols-1 gap-2">
             {!isMyOrder ? (
               <button 
                 onClick={() => onUpdateStatus(order.id, 'accepted')}
-                className="w-full bg-[#FFD000] text-black py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:scale-105 transition-transform"
+                className="w-full bg-[#FFD000] text-black py-3.5 sm:py-3 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 hover:scale-105 transition-transform"
               >
                 ACCEPTER <ArrowRight size={16} />
               </button>
@@ -426,7 +426,7 @@ const OrderCard: React.FC<{
                 {order.status === 'accepted' && (
                   <button 
                     onClick={() => onUpdateStatus(order.id, 'en_livraison')}
-                    className="w-full bg-orange-500 text-white py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:scale-105 transition-transform"
+                    className="w-full bg-orange-500 text-white py-3.5 sm:py-3 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 hover:scale-105 transition-transform"
                   >
                     EN LIVRAISON <Bike size={16} />
                   </button>
@@ -434,7 +434,7 @@ const OrderCard: React.FC<{
                 {order.status === 'en_livraison' && (
                   <button 
                     onClick={() => onUpdateStatus(order.id, 'delivered')}
-                    className="w-full bg-green-500 text-white py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:scale-105 transition-transform"
+                    className="w-full bg-green-500 text-white py-3.5 sm:py-3 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 hover:scale-105 transition-transform"
                   >
                     LIVRÉ <CheckCircle2 size={16} />
                   </button>
@@ -442,7 +442,7 @@ const OrderCard: React.FC<{
                 <div className="flex gap-2">
                   <a 
                     href={`tel:${order.customer_phone}`}
-                    className="flex-1 bg-white/5 text-white py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:bg-white/10 transition-colors"
+                    className="flex-1 bg-white/5 text-white py-3.5 sm:py-3 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 hover:bg-white/10 transition-colors"
                   >
                     <Phone size={16} />
                   </a>
@@ -450,7 +450,7 @@ const OrderCard: React.FC<{
                     href={`https://www.google.com/maps?q=${order.latitude},${order.longitude}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex-1 bg-white/5 text-white py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:bg-white/10 transition-colors"
+                    className="flex-1 bg-white/5 text-white py-3.5 sm:py-3 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 hover:bg-white/10 transition-colors"
                   >
                     <ExternalLink size={16} />
                   </a>

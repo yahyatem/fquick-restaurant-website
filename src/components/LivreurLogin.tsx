@@ -44,24 +44,24 @@ export default function LivreurLogin() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6">
+    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4 sm:p-6">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-md space-y-8"
+        className="w-full max-w-md space-y-6 sm:space-y-8"
       >
-        <div className="text-center space-y-4">
-          <Link to="/" className="inline-flex items-center gap-2 text-gray-500 hover:text-white transition-colors text-sm font-black mb-4">
+        <div className="text-center space-y-3 sm:space-y-4">
+          <Link to="/" className="inline-flex items-center gap-2 text-gray-500 hover:text-white transition-colors text-sm font-black mb-2 sm:mb-4 p-2">
             <ChevronLeft size={16} /> RETOUR À L'ACCUEIL
           </Link>
-          <div className="w-20 h-20 bg-[#FFD000] rounded-3xl flex items-center justify-center mx-auto rotate-6 shadow-2xl shadow-[#FFD000]/20">
-            <Bike className="text-black" size={40} strokeWidth={2.5} />
+          <div className="w-16 h-16 sm:w-20 sm:h-20 bg-[#FFD000] rounded-2xl sm:rounded-3xl flex items-center justify-center mx-auto rotate-6 shadow-2xl shadow-[#FFD000]/20">
+            <Bike className="text-black" size={32} sm:size={40} strokeWidth={2.5} />
           </div>
-          <h1 className="text-4xl font-black tracking-tighter">ESPACE LIVREUR</h1>
-          <p className="text-gray-500 font-medium">Connectez-vous pour commencer vos livraisons.</p>
+          <h1 className="text-3xl sm:text-4xl font-black tracking-tighter">ESPACE LIVREUR</h1>
+          <p className="text-gray-500 font-medium text-sm sm:text-base">Connectez-vous pour commencer vos livraisons.</p>
         </div>
 
-        <form onSubmit={handleLogin} className="bg-[#111] border border-white/10 rounded-[40px] p-8 space-y-6 shadow-2xl">
+        <form onSubmit={handleLogin} className="bg-[#111] border border-white/10 rounded-[32px] sm:rounded-[40px] p-6 sm:p-8 space-y-5 sm:space-y-6 shadow-2xl">
           {error && (
             <div className="bg-red-500/10 border border-red-500/50 text-red-500 p-4 rounded-2xl text-xs font-black text-center uppercase tracking-widest">
               {error}
