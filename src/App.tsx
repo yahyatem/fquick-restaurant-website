@@ -11,7 +11,6 @@ import Contact from "./components/Contact";
 import AdminLogin from "./components/AdminLogin";
 import AdminDashboard from "./components/AdminDashboard";
 import LivreurLogin from "./components/LivreurLogin";
-import LivreurRegistration from "./components/LivreurRegistration";
 import LivreurPage from "./components/LivreurPage";
 import TrackingPage from "./components/TrackingPage";
 import { cn } from "./lib/utils";
@@ -168,7 +167,6 @@ export default function App() {
           <Route path="/admin/login" element={<AdminLogin />} />
           <Route path="/admin" element={<AdminDashboard />} />
           <Route path="/livreur/login" element={<LivreurLogin />} />
-          <Route path="/livreur/register" element={<LivreurRegistration />} />
           <Route path="/livreur" element={<LivreurPage />} />
           <Route path="/tracking/:id" element={<TrackingPage />} />
         </Routes>

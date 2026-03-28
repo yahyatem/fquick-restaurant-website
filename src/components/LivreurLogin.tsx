@@ -108,7 +108,7 @@ export default function LivreurLogin() {
         </form>
 
         <p className="text-center text-gray-500 text-sm font-bold">
-          Pas encore de compte ? <Link to="/livreur/register" className="text-[#FFD000] hover:underline">S'inscrire</Link>
+          Espace réservé aux livreurs F-Quick
         </p>
       </motion.div>
     </div>

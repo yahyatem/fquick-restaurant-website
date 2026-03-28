@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
-import { Bike, MapPin, Phone, Package, LogOut, CheckCircle2, Clock, ExternalLink, ArrowRight } from "lucide-react";
+import { Bike, MapPin, Phone, Package, LogOut, CheckCircle2, Clock, ExternalLink, ArrowRight, History, User, Navigation, Truck } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { Order, OrderItem } from "../types";
 import { format } from "date-fns";
@@ -14,8 +14,9 @@ interface OrderWithItems extends Order {
 export default function LivreurPage() {
   const [orders, setOrders] = useState<OrderWithItems[]>([]);
   const [loading, setLoading] = useState(true);
-  const [livreurName, setLivreurName] = useState("");
+  const [livreur, setLivreur] = useState<any>(null);
   const [livreurId, setLivreurId] = useState("");
+  const [activeTab, setActiveTab] = useState<'active' | 'history' | 'profile'>('active');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -24,9 +25,10 @@ export default function LivreurPage() {
       navigate("/livreur/login");
       return;
     }
-    setLivreurName(localStorage.getItem("livreur_name") || "Livreur");
-    setLivreurId(localStorage.getItem("livreur_id") || "");
+    const id = localStorage.getItem("livreur_id") || "";
+    setLivreurId(id);
     fetchOrders();
+    fetchLivreur(id);
 
     // Real-time subscription
     const subscription = supabase
@@ -40,6 +42,20 @@ export default function LivreurPage() {
       subscription.unsubscribe();
     };
   }, [navigate]);
+
+  const fetchLivreur = async (id: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('livreurs')
+        .select('*')
+        .eq('id', id)
+        .single();
+      if (error) throw error;
+      setLivreur(data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const fetchOrders = async () => {
     try {
@@ -116,18 +132,19 @@ export default function LivreurPage() {
   };
 
   const pendingOrders = orders.filter(o => o.status === 'pending');
-  const myOrders = orders.filter(o => o.livreur_id === livreurId && o.status !== 'delivered');
+  const myOrders = orders.filter(o => o.livreur_id === livreurId && o.status !== 'delivered' && o.status !== 'cancelled');
+  const historyOrders = orders.filter(o => o.livreur_id === livreurId && (o.status === 'delivered' || o.status === 'cancelled'));
 
   return (
-    <div className="min-h-screen bg-black text-white p-6 pb-24">
+    <div className="min-h-screen bg-black text-white p-6 pb-32">
       <header className="max-w-4xl mx-auto flex items-center justify-between mb-12">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-[#FFD000] rounded-2xl flex items-center justify-center rotate-3">
-            <Bike className="text-black" size={24} strokeWidth={2.5} />
+          <div className="w-12 h-12 bg-[#FFD000] rounded-2xl flex items-center justify-center rotate-3 shadow-lg shadow-[#FFD000]/20">
+            <Truck className="text-black" size={24} strokeWidth={2.5} />
           </div>
           <div>
             <h1 className="text-2xl font-black tracking-tighter uppercase italic">F-QUICK DELIVERY</h1>
-            <p className="text-gray-500 text-xs font-black tracking-widest uppercase">Bonjour, {livreurName}</p>
+            <p className="text-gray-500 text-[10px] font-black tracking-widest uppercase">Bonjour, {livreur?.full_name || "Livreur"}</p>
           </div>
         </div>
         <button 
@@ -138,61 +155,207 @@ export default function LivreurPage() {
         </button>
       </header>
 
-      <main className="max-w-4xl mx-auto space-y-12">
-        {/* Mes Livraisons en cours */}
-        {myOrders.length > 0 && (
-          <section className="space-y-6">
-            <div className="flex items-center gap-3">
-              <div className="w-2 h-8 bg-[#FFD000] rounded-full" />
-              <h2 className="text-xl font-black tracking-tight uppercase italic">MES LIVRAISONS EN COURS</h2>
-              <span className="bg-[#FFD000] text-black px-2 py-0.5 rounded text-[10px] font-black">{myOrders.length}</span>
-            </div>
-            <div className="grid gap-4">
-              {myOrders.map(order => (
-                <OrderCard 
-                  key={order.id} 
-                  order={order} 
-                  isMyOrder={true}
-                  onUpdateStatus={updateOrderStatus}
-                />
-              ))}
-            </div>
-          </section>
-        )}
+      <main className="max-w-4xl mx-auto">
+        <div className="flex gap-2 mb-12 overflow-x-auto pb-2 scrollbar-hide">
+          <TabButton 
+            active={activeTab === 'active'} 
+            onClick={() => setActiveTab('active')} 
+            icon={<Clock size={18} />} 
+            label="En cours" 
+            count={myOrders.length + pendingOrders.length}
+          />
+          <TabButton 
+            active={activeTab === 'history'} 
+            onClick={() => setActiveTab('history')} 
+            icon={<History size={18} />} 
+            label="Historique" 
+            count={historyOrders.length}
+          />
+          <TabButton 
+            active={activeTab === 'profile'} 
+            onClick={() => setActiveTab('profile')} 
+            icon={<User size={18} />} 
+            label="Mon Profil" 
+          />
+        </div>
 
-        {/* Commandes Disponibles */}
-        <section className="space-y-6">
-          <div className="flex items-center gap-3">
-            <div className="w-2 h-8 bg-white/20 rounded-full" />
-            <h2 className="text-xl font-black tracking-tight uppercase italic">COMMANDES DISPONIBLES</h2>
-            <span className="bg-white/10 text-white px-2 py-0.5 rounded text-[10px] font-black">{pendingOrders.length}</span>
-          </div>
-          
-          {loading ? (
-            <div className="flex justify-center py-12">
-              <div className="w-8 h-8 border-2 border-[#FFD000] border-t-transparent rounded-full animate-spin" />
-            </div>
-          ) : pendingOrders.length === 0 ? (
-            <div className="bg-[#111] border border-dashed border-white/10 rounded-[40px] p-12 text-center">
-              <Package size={48} className="text-gray-800 mx-auto mb-4" />
-              <p className="text-gray-500 font-black uppercase tracking-widest text-sm">Aucune commande disponible</p>
-            </div>
-          ) : (
-            <div className="grid gap-4">
-              {pendingOrders.map(order => (
-                <OrderCard 
-                  key={order.id} 
-                  order={order} 
-                  isMyOrder={false}
-                  onUpdateStatus={updateOrderStatus}
-                />
-              ))}
-            </div>
+        <AnimatePresence mode="wait">
+          {activeTab === 'active' && (
+            <motion.div 
+              key="active"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-12"
+            >
+              {myOrders.length > 0 && (
+                <section className="space-y-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-2 h-8 bg-[#FFD000] rounded-full" />
+                    <h2 className="text-xl font-black tracking-tight uppercase italic">MES LIVRAISONS</h2>
+                  </div>
+                  <div className="grid gap-6">
+                    {myOrders.map(order => (
+                      <OrderCard 
+                        key={order.id} 
+                        order={order} 
+                        isMyOrder={true}
+                        onUpdateStatus={updateOrderStatus}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              <section className="space-y-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-8 bg-white/20 rounded-full" />
+                  <h2 className="text-xl font-black tracking-tight uppercase italic">COMMANDES DISPONIBLES</h2>
+                </div>
+                
+                {loading ? (
+                  <div className="flex justify-center py-12">
+                    <div className="w-8 h-8 border-2 border-[#FFD000] border-t-transparent rounded-full animate-spin" />
+                  </div>
+                ) : pendingOrders.length === 0 ? (
+                  <div className="bg-[#111] border border-dashed border-white/10 rounded-[40px] p-12 text-center">
+                    <Package size={48} className="text-gray-800 mx-auto mb-4" />
+                    <p className="text-gray-500 font-black uppercase tracking-widest text-sm">Aucune commande disponible</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-6">
+                    {pendingOrders.map(order => (
+                      <OrderCard 
+                        key={order.id} 
+                        order={order} 
+                        isMyOrder={false}
+                        onUpdateStatus={updateOrderStatus}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+            </motion.div>
           )}
-        </section>
+
+          {activeTab === 'history' && (
+            <motion.div 
+              key="history"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-6"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-2 h-8 bg-white/20 rounded-full" />
+                <h2 className="text-xl font-black tracking-tight uppercase italic">HISTORIQUE DES LIVRAISONS</h2>
+              </div>
+              <div className="grid gap-4">
+                {historyOrders.map(order => (
+                  <div key={order.id} className="bg-[#111] border border-white/10 rounded-[32px] p-6 opacity-60 grayscale hover:grayscale-0 transition-all">
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <h3 className="font-black text-lg">{order.customer_name}</h3>
+                        <p className="text-gray-500 font-bold text-xs">{format(new Date(order.created_at), "dd MMMM yyyy", { locale: fr })}</p>
+                      </div>
+                      <span className={cn(
+                        "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                        order.status === 'delivered' ? "bg-green-500/20 text-green-500" : "bg-red-500/20 text-red-500"
+                      )}>
+                        {order.status === 'delivered' ? "LIVRÉE" : "ANNULÉE"}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 mb-4">
+                      {order.order_items.map((item, i) => (
+                        <span key={i} className="bg-white/5 px-2 py-1 rounded text-[10px] font-bold">
+                          {item.quantity}x {item.product_name}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="pt-4 border-t border-white/5 flex justify-between items-center">
+                      <span className="font-black text-[#FFD000]">{order.total.toFixed(2)} MAD</span>
+                      <span className="text-[10px] font-bold text-gray-600">ID: #{order.id.slice(0, 8)}</span>
+                    </div>
+                  </div>
+                ))}
+                {historyOrders.length === 0 && (
+                  <div className="py-20 text-center border-2 border-dashed border-white/5 rounded-[40px]">
+                    <p className="text-gray-500 font-bold">Aucun historique de livraison</p>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'profile' && (
+            <motion.div 
+              key="profile"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="max-w-md mx-auto"
+            >
+              <div className="bg-[#111] border border-white/10 rounded-[40px] p-10 text-center shadow-2xl">
+                <div className="w-24 h-24 bg-[#FFD000] rounded-[32px] flex items-center justify-center text-black mx-auto mb-8 rotate-6 shadow-xl shadow-[#FFD000]/20">
+                  <User size={48} />
+                </div>
+                <h2 className="text-3xl font-black tracking-tighter mb-2 uppercase italic">{livreur?.full_name}</h2>
+                <p className="text-[#FFD000] font-black tracking-widest text-sm mb-10 uppercase">{livreur?.phone}</p>
+                
+                <div className="grid grid-cols-2 gap-4 mb-10">
+                  <div className="bg-black/40 rounded-3xl p-5 border border-white/5">
+                    <p className="text-[10px] font-black text-gray-500 uppercase mb-2">Total Livraisons</p>
+                    <p className="text-3xl font-black text-white">{historyOrders.filter(o => o.status === 'delivered').length}</p>
+                  </div>
+                  <div className="bg-black/40 rounded-3xl p-5 border border-white/5">
+                    <p className="text-[10px] font-black text-gray-500 uppercase mb-2">Statut</p>
+                    <p className="text-xs font-black text-green-500 uppercase">En Service</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-5 bg-black/40 rounded-2xl border border-white/5">
+                    <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">Membre depuis</span>
+                    <span className="text-xs font-black">{livreur ? format(new Date(livreur.created_at), "dd/MM/yyyy") : "-"}</span>
+                  </div>
+                  <div className="flex items-center justify-between p-5 bg-black/40 rounded-2xl border border-white/5">
+                    <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">ID Livreur</span>
+                    <span className="text-xs font-black">#{livreur?.id.slice(0, 8)}</span>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </main>
     </div>
   );
+}
+
+function TabButton({ active, onClick, icon, label, count }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; count?: number }) {
+  return (
+    <button 
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-3 px-6 py-4 rounded-2xl font-black text-sm transition-all whitespace-nowrap",
+        active ? "bg-[#FFD000] text-black shadow-lg shadow-[#FFD000]/20" : "bg-white/5 text-gray-500 hover:text-white hover:bg-white/10"
+      )}
+    >
+      {icon} {label}
+      {count !== undefined && (
+        <span className={cn(
+          "px-2 py-0.5 rounded-lg text-[10px] font-black",
+          active ? "bg-black/20" : "bg-white/10"
+        )}>
+          {count}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function cn(...classes: any[]) {
+  return classes.filter(Boolean).join(' ');
 }
 
 const OrderCard: React.FC<{ 
