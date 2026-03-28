@@ -3,12 +3,16 @@ import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { Bike, MapPin, Phone, Package, LogOut, CheckCircle2, Clock, ExternalLink, ArrowRight } from "lucide-react";
 import { supabase } from "../lib/supabase";
-import { Order } from "../types";
+import { Order, OrderItem } from "../types";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 
+interface OrderWithItems extends Order {
+  order_items: OrderItem[];
+}
+
 export default function LivreurPage() {
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [orders, setOrders] = useState<OrderWithItems[]>([]);
   const [loading, setLoading] = useState(true);
   const [livreurName, setLivreurName] = useState("");
   const [livreurId, setLivreurId] = useState("");
@@ -41,7 +45,7 @@ export default function LivreurPage() {
     try {
       const { data, error } = await supabase
         .from('orders')
-        .select('*')
+        .select('*, order_items(*)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -64,11 +68,29 @@ export default function LivreurPage() {
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
     try {
       const updateData: any = { status: newStatus };
+      const now = new Date().toISOString();
       
-      // If accepting, assign the livreur
+      // If accepting, assign the livreur and set accepted_at
       if (newStatus === 'accepted') {
+        // Exclusivity check: ensure no one else accepted it
+        const { data: currentOrder } = await supabase
+          .from('orders')
+          .select('livreur_id')
+          .eq('id', orderId)
+          .single();
+        
+        if (currentOrder?.livreur_id) {
+          alert("Cette commande a déjà été acceptée par un autre livreur.");
+          fetchOrders();
+          return;
+        }
+
         updateData.livreur_id = livreurId;
-        updateData.livreur_name = livreurName;
+        updateData.accepted_at = now;
+      } else if (newStatus === 'en_livraison') {
+        updateData.picked_up_at = now;
+      } else if (newStatus === 'delivered') {
+        updateData.delivered_at = now;
       }
 
       const { error } = await supabase
@@ -174,7 +196,7 @@ export default function LivreurPage() {
 }
 
 const OrderCard: React.FC<{ 
-  order: Order, 
+  order: OrderWithItems, 
   isMyOrder: boolean,
   onUpdateStatus: (id: string, status: string) => void | Promise<void>
 }> = ({ order, isMyOrder, onUpdateStatus }) => {
@@ -201,7 +223,7 @@ const OrderCard: React.FC<{
               order.status === 'accepted' ? 'bg-[#FFD000]/10 text-[#FFD000]' :
               'bg-orange-500/10 text-orange-500'
             }`}>
-              {order.status}
+              {order.status.replace('_', ' ')}
             </span>
           </div>
 
@@ -214,9 +236,9 @@ const OrderCard: React.FC<{
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {order.items.map((item, i) => (
+            {order.order_items.map((item, i) => (
               <span key={i} className="bg-white/5 px-3 py-1 rounded-lg text-[10px] font-bold">
-                {item.quantity}x {item.name}
+                {item.quantity}x {item.product_name}
               </span>
             ))}
           </div>
@@ -240,13 +262,13 @@ const OrderCard: React.FC<{
               <>
                 {order.status === 'accepted' && (
                   <button 
-                    onClick={() => onUpdateStatus(order.id, 'en livraison')}
+                    onClick={() => onUpdateStatus(order.id, 'en_livraison')}
                     className="w-full bg-orange-500 text-white py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:scale-105 transition-transform"
                   >
                     EN LIVRAISON <Bike size={16} />
                   </button>
                 )}
-                {order.status === 'en livraison' && (
+                {order.status === 'en_livraison' && (
                   <button 
                     onClick={() => onUpdateStatus(order.id, 'delivered')}
                     className="w-full bg-green-500 text-white py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:scale-105 transition-transform"

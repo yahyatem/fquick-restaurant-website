@@ -5,7 +5,7 @@ import { Bike, User, Phone, Lock, ArrowRight, ChevronLeft } from "lucide-react";
 import { supabase } from "../lib/supabase";
 
 export default function LivreurRegistration() {
-  const [name, setName] = useState("");
+  const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -17,7 +17,7 @@ export default function LivreurRegistration() {
     setIsLoading(true);
     setError("");
 
-    if (!name || !phone || !password) {
+    if (!fullName || !phone || !password) {
       setError("Veuillez remplir tous les champs.");
       setIsLoading(false);
       return;
@@ -37,22 +37,24 @@ export default function LivreurRegistration() {
         return;
       }
 
-      const { error: insertError } = await supabase
+      const { data: newLivreur, error: insertError } = await supabase
         .from('livreurs')
         .insert([{
-          name,
+          full_name: fullName,
           phone,
           password,
-          status: 'available',
-          created_at: new Date().toISOString()
-        }]);
+          status: 'available'
+        }])
+        .select()
+        .single();
 
       if (insertError) throw insertError;
 
       // Automatically log in after registration
       localStorage.setItem("livreur_authenticated", "true");
       localStorage.setItem("livreur_phone", phone);
-      localStorage.setItem("livreur_name", name);
+      localStorage.setItem("livreur_name", fullName);
+      localStorage.setItem("livreur_id", newLivreur.id);
       
       navigate("/livreur");
     } catch (err) {
@@ -96,8 +98,8 @@ export default function LivreurRegistration() {
                 <input 
                   type="text" 
                   placeholder="Votre nom..."
-                  value={name}
-                  onChange={e => setName(e.target.value)}
+                  value={fullName}
+                  onChange={e => setFullName(e.target.value)}
                   className="w-full bg-black border border-white/10 rounded-2xl pl-12 pr-4 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
                 />
               </div>

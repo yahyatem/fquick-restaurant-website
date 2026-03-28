@@ -18,17 +18,21 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { Order, Analytics } from "../types";
+import { Order, Analytics, OrderItem } from "../types";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "../lib/utils";
 import { supabase } from "../lib/supabase";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
+interface OrderWithItems extends Order {
+  order_items: OrderItem[];
+}
+
 export default function AdminDashboard() {
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [orders, setOrders] = useState<OrderWithItems[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
-  const [notifications, setNotifications] = useState<Order[]>([]);
+  const [notifications, setNotifications] = useState<OrderWithItems[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -44,18 +48,24 @@ export default function AdminDashboard() {
     // Supabase real-time subscription
     const subscription = supabase
       .channel('admin_orders')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, (payload) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, async (payload) => {
         const newOrder = payload.new as Order;
-        setOrders(prev => [newOrder, ...prev]);
-        setNotifications(prev => [newOrder, ...prev]);
         
-        // Update analytics
-        setOrders(prevOrders => {
-          const updatedOrders = [newOrder, ...prevOrders];
+        // Fetch items for the new order
+        const { data: items } = await supabase
+          .from('order_items')
+          .select('*')
+          .eq('order_id', newOrder.id);
+        
+        const orderWithItems = { ...newOrder, order_items: items || [] } as OrderWithItems;
+        
+        setOrders(prev => {
+          const updatedOrders = [orderWithItems, ...prev];
           setAnalytics(calculateAnalytics(updatedOrders));
           return updatedOrders;
         });
-
+        setNotifications(prev => [orderWithItems, ...prev]);
+        
         // Play notification sound
         const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
         audio.play().catch(() => {});
@@ -67,15 +77,15 @@ export default function AdminDashboard() {
     };
   }, [navigate]);
 
-  const calculateAnalytics = (orders: Order[]) => {
+  const calculateAnalytics = (orders: OrderWithItems[]) => {
     const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
     const orderCount = orders.length;
 
     // Top Products
     const productMap: Record<string, number> = {};
     orders.forEach(o => {
-      o.items.forEach(i => {
-        productMap[i.name] = (productMap[i.name] || 0) + i.quantity;
+      o.order_items?.forEach(i => {
+        productMap[i.product_name] = (productMap[i.product_name] || 0) + i.quantity;
       });
     });
     const bestSellers = Object.entries(productMap)
@@ -96,11 +106,13 @@ export default function AdminDashboard() {
       .sort((a, b) => b.total - a.total)
       .slice(0, 3);
 
-    // Top Delivery Person
+    // Top Delivery Person (We don't have livreur_name in orders anymore, but we have livreur_id)
+    // For simplicity, we'll just count by ID or skip if we don't fetch livreur names here.
+    // Let's just count by ID for now.
     const livreurMap: Record<string, number> = {};
     orders.forEach(o => {
-      if (o.livreur_name) {
-        livreurMap[o.livreur_name] = (livreurMap[o.livreur_name] || 0) + 1;
+      if (o.livreur_id) {
+        livreurMap[o.livreur_id] = (livreurMap[o.livreur_id] || 0) + 1;
       }
     });
     const topLivreurs = Object.entries(livreurMap)
@@ -115,12 +127,12 @@ export default function AdminDashboard() {
     try {
       const { data, error } = await supabase
         .from('orders')
-        .select('*')
+        .select('*, order_items(*)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setOrders(data || []);
-      setAnalytics(calculateAnalytics(data || []));
+      setOrders((data as OrderWithItems[]) || []);
+      setAnalytics(calculateAnalytics((data as OrderWithItems[]) || []));
     } catch (err) {
       console.error(err);
     } finally {
@@ -152,7 +164,7 @@ export default function AdminDashboard() {
     const tableData = orders.map(o => [
       format(new Date(o.created_at), "dd/MM HH:mm"),
       o.customer_name || o.customer_phone,
-      o.items.map(i => `${i.name} x${i.quantity}`).join(", "),
+      o.order_items.map(i => `${i.product_name} x${i.quantity}`).join(", "),
       `${o.total} MAD`
     ]);
 
@@ -285,7 +297,7 @@ export default function AdminDashboard() {
                       </td>
                       <td className="px-6 py-4">
                         <div className="text-sm font-medium">
-                          {order.items.map(i => `${i.name} x${i.quantity}`).join(", ")}
+                          {order.order_items.map(i => `${i.product_name} x${i.quantity}`).join(", ")}
                         </div>
                       </td>
                       <td className="px-6 py-4">

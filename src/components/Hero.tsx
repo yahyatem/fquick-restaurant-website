@@ -9,6 +9,7 @@ export default function Hero() {
         <img 
           src="https://images.unsplash.com/photo-1561758033-d89a9ad46330?auto=format&fit=crop&q=80&w=2000" 
           alt="Fast Food" 
+          loading="lazy"
           className="w-full h-full object-cover"
           referrerPolicy="no-referrer"
         />

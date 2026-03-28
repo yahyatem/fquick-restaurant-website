@@ -1,35 +1,63 @@
 export interface MenuItem {
   id: string;
   name: string;
+  description?: string;
   price: number;
   category: string;
-  image?: string;
+  image_url?: string;
+  is_active?: boolean;
+  created_at?: string;
 }
 
-export interface CartItem extends MenuItem {
+export interface CartItem {
+  id: string;
+  name: string;
+  price: number;
   quantity: number;
 }
 
-export interface Order {
+export interface Client {
   id: string;
-  items: CartItem[];
-  total: number;
-  customer_name: string;
-  customer_phone: string;
-  latitude?: number;
-  longitude?: number;
-  status: 'pending' | 'accepted' | 'en livraison' | 'delivered' | 'cancelled';
-  livreur_id?: string;
-  livreur_name?: string;
+  full_name: string;
+  phone: string;
   created_at: string;
 }
 
 export interface Livreur {
   id: string;
-  name: string;
+  full_name: string;
   phone: string;
   password?: string;
   status: 'available' | 'busy';
+  created_at: string;
+}
+
+export interface Order {
+  id: string;
+  client_id?: string;
+  livreur_id?: string;
+  customer_name: string;
+  customer_phone: string;
+  latitude: number;
+  longitude: number;
+  total: number;
+  status: 'pending' | 'accepted' | 'en_livraison' | 'delivered' | 'cancelled';
+  tracking_code: string;
+  notes?: string;
+  created_at: string;
+  accepted_at?: string;
+  picked_up_at?: string;
+  delivered_at?: string;
+}
+
+export interface OrderItem {
+  id: string;
+  order_id: string;
+  product_id: string;
+  product_name: string;
+  unit_price: number;
+  quantity: number;
+  subtotal: number;
   created_at: string;
 }
 

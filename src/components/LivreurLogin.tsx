@@ -29,7 +29,7 @@ export default function LivreurLogin() {
       if (livreur) {
         localStorage.setItem("livreur_authenticated", "true");
         localStorage.setItem("livreur_phone", phone);
-        localStorage.setItem("livreur_name", livreur.name);
+        localStorage.setItem("livreur_name", livreur.full_name);
         localStorage.setItem("livreur_id", livreur.id);
         navigate("/livreur");
       } else {

@@ -64,58 +64,105 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
   const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
   const handleCheckout = async () => {
+    // 4. Validate data before insert
     if (!name || !phone || !location) {
       alert("Veuillez remplir tous les champs et partager votre localisation.");
+      return;
+    }
+
+    if (items.length === 0) {
+      alert("Votre panier est vide.");
       return;
     }
 
     setIsOrdering(true);
     setError(null);
 
-    const orderData = {
-      customer_name: name,
-      customer_phone: phone,
-      latitude: location.lat,
-      longitude: location.lng,
-      total,
-      status: 'pending',
-      items: items.map(i => ({ name: i.name, quantity: i.quantity, price: i.price })),
-      created_at: new Date().toISOString(),
-    };
-
     try {
-      const { data, error: supabaseError } = await supabase
+      // 1. Fix client handling: Check if a client exists in `clients` by phone
+      const { data: clientData, error: clientError } = await supabase
+        .from('clients')
+        .select('id')
+        .eq('phone', phone)
+        .maybeSingle();
+
+      if (clientError) {
+        console.error("Supabase Client Lookup Error:", clientError); // 5. Debugging
+        throw clientError;
+      }
+
+      let clientId = clientData?.id;
+
+      // If not, insert a new client
+      if (!clientId) {
+        const { data: newClient, error: createClientError } = await supabase
+          .from('clients')
+          .insert([{ full_name: name, phone }])
+          .select()
+          .single();
+        
+        if (createClientError) {
+          console.error("Supabase Client Creation Error:", createClientError); // 5. Debugging
+          throw createClientError;
+        }
+        clientId = newClient.id;
+      }
+
+      // 2. Fix order insert: Insert into `orders` using ONLY valid fields
+      const trackingCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+      const { data: order, error: orderError } = await supabase
         .from('orders')
-        .insert([orderData])
+        .insert([{
+          client_id: clientId,
+          customer_name: name,
+          customer_phone: phone,
+          latitude: location.lat,
+          longitude: location.lng,
+          total: total,
+          status: 'pending',
+          tracking_code: trackingCode
+        }])
         .select()
         .single();
 
-      if (supabaseError) {
-        console.error("Supabase insert error details:", {
-          message: supabaseError.message,
-          details: supabaseError.details,
-          hint: supabaseError.hint,
-          code: supabaseError.code
-        });
-        throw supabaseError;
+      if (orderError) {
+        console.error("Supabase Order Insert Error:", orderError); // 5. Debugging
+        throw orderError;
       }
 
+      // 3. Fix order_items insert
+      const orderItems = items.map(item => ({
+        order_id: order.id,
+        product_id: item.id,
+        product_name: item.name,
+        unit_price: item.price,
+        quantity: item.quantity,
+        subtotal: item.price * item.quantity
+      }));
+
+      const { error: itemsError } = await supabase
+        .from('order_items')
+        .insert(orderItems);
+
+      if (itemsError) {
+        console.error("Supabase Order Items Insert Error:", itemsError); // 5. Debugging
+        throw itemsError;
+      }
+
+      // 6. Success behavior
       setIsSuccess(true);
-      onClearCart();
+      onClearCart(); // clear cart
       
       setTimeout(() => {
         setIsSuccess(false);
         setIsModalOpen(false);
         onClose();
-        if (data?.id) {
-          navigate(`/tracking/${data.id}`);
-        } else {
-          navigate("/");
-        }
+        navigate(`/tracking/${order.id}`); // redirect user
       }, 2000);
-    } catch (err) {
-      console.error("Order submission failed:", err);
-      setError("Une erreur est survenue lors de la validation de votre commande. Veuillez vérifier votre connexion et réessayer.");
+    } catch (err: any) {
+      // 5. Debugging: Show real error
+      console.error("FULL ERROR OBJECT:", err);
+      setError(err.message || "Erreur inconnue");
     } finally {
       setIsOrdering(false);
     }

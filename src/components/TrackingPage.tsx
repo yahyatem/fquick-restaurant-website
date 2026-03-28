@@ -3,36 +3,61 @@ import { useParams, Link } from "react-router-dom";
 import { motion } from "motion/react";
 import { ShoppingBag, MapPin, Phone, Clock, ChevronLeft, CheckCircle2, Package, Truck, Bike } from "lucide-react";
 import { supabase } from "../lib/supabase";
-import { Order } from "../types";
+import { Order, OrderItem, Livreur } from "../types";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 
 export default function TrackingPage() {
   const { id } = useParams<{ id: string }>();
   const [order, setOrder] = useState<Order | null>(null);
+  const [items, setItems] = useState<OrderItem[]>([]);
+  const [livreur, setLivreur] = useState<Livreur | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!id) return;
 
-    const fetchOrder = async () => {
+    const fetchOrderData = async () => {
       try {
-        const { data, error } = await supabase
+        // 1. Fetch Order
+        const { data: orderData, error: orderError } = await supabase
           .from('orders')
           .select('*')
           .eq('id', id)
           .single();
 
-        if (error) throw error;
-        setOrder(data);
+        if (orderError) throw orderError;
+        setOrder(orderData);
+
+        // 2. Fetch Order Items
+        const { data: itemsData, error: itemsError } = await supabase
+          .from('order_items')
+          .select('*')
+          .eq('order_id', id);
+
+        if (itemsError) throw itemsError;
+        setItems(itemsData || []);
+
+        // 3. Fetch Livreur if assigned
+        if (orderData.livreur_id) {
+          const { data: livreurData, error: livreurError } = await supabase
+            .from('livreurs')
+            .select('*')
+            .eq('id', orderData.livreur_id)
+            .single();
+
+          if (!livreurError) {
+            setLivreur(livreurData);
+          }
+        }
       } catch (err) {
-        console.error("Error fetching order:", err);
+        console.error("Error fetching order details:", err);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchOrder();
+    fetchOrderData();
 
     // Real-time subscription for updates
     const subscription = supabase
@@ -44,13 +69,23 @@ export default function TrackingPage() {
         filter: `id=eq.${id}`
       }, (payload) => {
         setOrder(payload.new as Order);
+        
+        // If livreur was just assigned, fetch their info
+        if (payload.new.livreur_id && !livreur) {
+          supabase
+            .from('livreurs')
+            .select('*')
+            .eq('id', payload.new.livreur_id)
+            .single()
+            .then(({ data }) => setLivreur(data as Livreur));
+        }
       })
       .subscribe();
 
     return () => {
       subscription.unsubscribe();
     };
-  }, [id]);
+  }, [id, livreur]);
 
   if (loading) {
     return (
@@ -76,7 +111,7 @@ export default function TrackingPage() {
   const steps = [
     { status: 'pending', label: 'En attente', icon: Clock },
     { status: 'accepted', label: 'Acceptée', icon: CheckCircle2 },
-    { status: 'en livraison', label: 'En livraison', icon: Bike },
+    { status: 'en_livraison', label: 'En livraison', icon: Bike },
     { status: 'delivered', label: 'Livrée', icon: Package },
   ];
 
@@ -125,7 +160,7 @@ export default function TrackingPage() {
         </div>
 
         {/* Livreur Info */}
-        {order.livreur_name && (
+        {livreur && (
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -136,11 +171,11 @@ export default function TrackingPage() {
             </div>
             <div className="flex-1">
               <p className="text-[10px] font-black uppercase opacity-50 tracking-widest">Votre livreur</p>
-              <h3 className="text-xl font-black">{order.livreur_name}</h3>
+              <h3 className="text-xl font-black">{livreur.full_name}</h3>
               <p className="text-sm font-bold opacity-70">En route vers vous !</p>
             </div>
             <a 
-              href={`tel:${order.livreur_id}`} // Assuming livreur_id might be phone or we need a separate field
+              href={`tel:${livreur.phone}`}
               className="w-12 h-12 bg-black text-[#FFD000] rounded-xl flex items-center justify-center hover:scale-110 transition-transform"
             >
               <Phone size={20} />
@@ -162,15 +197,15 @@ export default function TrackingPage() {
           </div>
 
           <div className="p-6 space-y-4">
-            {order.items.map((item, idx) => (
+            {items.map((item, idx) => (
               <div key={idx} className="flex justify-between items-center">
                 <div className="flex items-center gap-3">
                   <span className="w-6 h-6 bg-white/5 rounded flex items-center justify-center text-xs font-black text-[#FFD000]">
                     {item.quantity}
                   </span>
-                  <span className="font-bold">{item.name}</span>
+                  <span className="font-bold">{item.product_name}</span>
                 </div>
-                <span className="text-gray-500 font-bold">{(item.price * item.quantity).toFixed(2)} MAD</span>
+                <span className="text-gray-500 font-bold">{(item.unit_price * item.quantity).toFixed(2)} MAD</span>
               </div>
             ))}
           </div>
