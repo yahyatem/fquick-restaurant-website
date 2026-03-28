@@ -31,10 +31,11 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { Order, Analytics, OrderItem, Livreur, Client } from "../types";
+import { Order, Analytics, OrderItem, Livreur, Client, MenuItem } from "../types";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "../lib/utils";
 import { supabase } from "../lib/supabase";
+import { CATEGORIES } from "../constants";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -50,9 +51,12 @@ export default function AdminDashboard() {
   const [orders, setOrders] = useState<OrderWithItems[]>([]);
   const [livreurs, setLivreurs] = useState<Livreur[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
+  const [products, setProducts] = useState<MenuItem[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [notifications, setNotifications] = useState<OrderWithItems[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // Livreur Modal State
   const [isLivreurModalOpen, setIsLivreurModalOpen] = useState(false);
   const [editingLivreur, setEditingLivreur] = useState<Livreur | null>(null);
   const [livreurForm, setLivreurForm] = useState({
@@ -61,6 +65,21 @@ export default function AdminDashboard() {
     password: "",
     status: "available" as const
   });
+
+  // Product Modal State
+  const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [productToDeleteId, setProductToDeleteId] = useState<string | null>(null);
+  const [editingProduct, setEditingProduct] = useState<MenuItem | null>(null);
+  const [productForm, setProductForm] = useState({
+    name: "",
+    description: "",
+    price: 0,
+    category: CATEGORIES[0],
+    image_url: "",
+    is_active: true
+  });
+
   const [orderFilter, setOrderFilter] = useState<Order['status'] | 'all'>('all');
   const [livreurFilter, setLivreurFilter] = useState<string>('all');
   const navigate = useNavigate();
@@ -152,19 +171,22 @@ export default function AdminDashboard() {
 
   const fetchData = async () => {
     try {
-      const [ordersRes, livreursRes, clientsRes] = await Promise.all([
+      const [ordersRes, livreursRes, clientsRes, productsRes] = await Promise.all([
         supabase.from('orders').select('*, order_items(*)').order('created_at', { ascending: false }),
         supabase.from('livreurs').select('*').order('created_at', { ascending: false }),
-        supabase.from('clients').select('*').order('created_at', { ascending: false })
+        supabase.from('clients').select('*').order('created_at', { ascending: false }),
+        supabase.from('products').select('*').order('created_at', { ascending: false })
       ]);
 
       if (ordersRes.error) throw ordersRes.error;
       if (livreursRes.error) throw livreursRes.error;
       if (clientsRes.error) throw clientsRes.error;
+      if (productsRes.error) throw productsRes.error;
 
       setOrders((ordersRes.data as OrderWithItems[]) || []);
       setLivreurs((livreursRes.data as Livreur[]) || []);
       setClients((clientsRes.data as Client[]) || []);
+      setProducts((productsRes.data as MenuItem[]) || []);
       setAnalytics(calculateAnalytics((ordersRes.data as OrderWithItems[]) || []));
     } catch (err) {
       console.error(err);
@@ -247,6 +269,58 @@ export default function AdminDashboard() {
         .eq('id', id);
       if (error) throw error;
       fetchData();
+    } catch (err) {
+      console.error(err);
+      alert("Erreur lors de la suppression");
+    }
+  };
+
+  const handleSaveProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!productForm.name.trim()) return alert("Le nom est requis");
+    if (productForm.price <= 0) return alert("Le prix doit être supérieur à 0");
+    if (!productForm.category) return alert("La catégorie est requise");
+
+    try {
+      if (editingProduct) {
+        const { error } = await supabase
+          .from('products')
+          .update(productForm)
+          .eq('id', editingProduct.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('products')
+          .insert([productForm]);
+        if (error) throw error;
+      }
+      setIsProductModalOpen(false);
+      setEditingProduct(null);
+      setProductForm({ name: "", description: "", price: 0, category: CATEGORIES[0], image_url: "", is_active: true });
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      alert("Erreur lors de l'enregistrement du produit");
+    }
+  };
+
+  const handleDeleteProduct = (id: string) => {
+    setProductToDeleteId(id);
+    setIsDeleteModalOpen(true);
+  };
+
+  const confirmDeleteProduct = async () => {
+    if (!productToDeleteId) return;
+    try {
+      const { error } = await supabase
+        .from('products')
+        .delete()
+        .eq('id', productToDeleteId);
+      if (error) throw error;
+      setIsDeleteModalOpen(false);
+      setProductToDeleteId(null);
+      fetchData();
+      alert("Produit supprimé avec succès");
     } catch (err) {
       console.error(err);
       alert("Erreur lors de la suppression");
@@ -835,8 +909,88 @@ export default function AdminDashboard() {
               </div>
             )}
 
+            {activeTab === 'products' && (
+              <div className="space-y-6">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <h2 className="text-2xl font-black tracking-tighter uppercase italic">Gestion des Produits</h2>
+                  <button 
+                    onClick={() => {
+                      setEditingProduct(null);
+                      setProductForm({ name: "", description: "", price: 0, category: CATEGORIES[0], image_url: "", is_active: true });
+                      setIsProductModalOpen(true);
+                    }}
+                    className="w-full md:w-auto flex items-center justify-center gap-2 bg-[#FFD000] text-black px-6 py-4 rounded-2xl font-black text-sm hover:scale-105 transition-transform shadow-lg shadow-[#FFD000]/20"
+                  >
+                    <Plus size={18} /> AJOUTER UN PRODUIT
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                  {products.map(product => (
+                    <div key={product.id} className="bg-white/5 border border-white/10 rounded-[40px] overflow-hidden group relative flex flex-col">
+                      <div className="absolute top-4 right-4 flex gap-2 z-10 lg:opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button 
+                          onClick={() => {
+                            setEditingProduct(product);
+                            setProductForm({ 
+                              name: product.name, 
+                              description: product.description || "", 
+                              price: product.price, 
+                              category: product.category, 
+                              image_url: product.image_url || "", 
+                              is_active: product.is_active ?? true 
+                            });
+                            setIsProductModalOpen(true);
+                          }}
+                          className="p-3 bg-black/60 backdrop-blur-md hover:bg-blue-500/20 hover:text-blue-500 rounded-xl transition-all border border-white/10"
+                        >
+                          <Edit size={16} />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteProduct(product.id)}
+                          className="p-3 bg-black/60 backdrop-blur-md hover:bg-red-500/20 hover:text-red-500 rounded-xl transition-all border border-white/10"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+
+                      <div className="h-40 overflow-hidden relative">
+                        <img 
+                          src={product.image_url || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c"} 
+                          alt={product.name}
+                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                          referrerPolicy="no-referrer"
+                        />
+                        <div className="absolute bottom-4 left-4">
+                          <span className="bg-[#FFD000] text-black text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-wider">
+                            {product.category}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="p-6 flex flex-col flex-1">
+                        <h3 className="font-black text-xl tracking-tighter mb-2 group-hover:text-[#FFD000] transition-colors">{product.name}</h3>
+                        <p className="text-gray-500 font-medium text-sm line-clamp-2 mb-4 flex-1">
+                          {product.description || "Aucune description fournie."}
+                        </p>
+                        <div className="flex items-center justify-between pt-4 border-t border-white/5">
+                          <span className="text-2xl font-black text-[#FFD000]">{product.price} <span className="text-xs">MAD</span></span>
+                          <span className={cn(
+                            "text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest",
+                            product.is_active ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
+                          )}>
+                            {product.is_active ? "Actif" : "Inactif"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Placeholder sections for new tabs */}
-            {(activeTab === 'products' || activeTab === 'categories' || activeTab === 'settings' || activeTab === 'analytics') && (
+            {(activeTab === 'categories' || activeTab === 'settings' || activeTab === 'analytics') && (
               <div className="py-24 text-center border-2 border-dashed border-white/5 rounded-[40px]">
                 <div className="w-20 h-20 bg-white/5 rounded-3xl flex items-center justify-center mx-auto mb-6 text-gray-500">
                   {activeTab === 'products' && <Package size={40} />}
@@ -846,7 +1000,7 @@ export default function AdminDashboard() {
                 </div>
                 <h3 className="text-2xl font-black tracking-tighter mb-2 uppercase italic">Section en développement</h3>
                 <p className="text-gray-500 font-bold max-w-sm mx-auto">
-                  Cette section est en cours de déploiement. Revenez bientôt pour gérer vos {activeTab === 'products' ? 'produits' : activeTab === 'categories' ? 'catégories' : activeTab === 'settings' ? 'paramètres' : 'analyses'}.
+                  Cette section est en cours de déploiement. Revenez bientôt pour gérer vos {activeTab === 'categories' ? 'catégories' : activeTab === 'settings' ? 'paramètres' : 'analyses'}.
                 </p>
               </div>
             )}
@@ -938,6 +1092,170 @@ export default function AdminDashboard() {
                     </button>
                   </div>
                 </form>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Product Modal */}
+        <AnimatePresence>
+          {isProductModalOpen && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsProductModalOpen(false)}
+                className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+              />
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="relative w-full max-w-2xl bg-[#111] border border-white/10 rounded-[40px] p-8 shadow-2xl max-h-[90vh] overflow-y-auto scrollbar-hide"
+              >
+                <h2 className="text-3xl font-black tracking-tighter mb-8 uppercase italic">
+                  {editingProduct ? "MODIFIER PRODUIT" : "NOUVEAU PRODUIT"}
+                </h2>
+                
+                <form onSubmit={handleSaveProduct} className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">NOM DU PRODUIT</label>
+                        <input 
+                          required
+                          type="text" 
+                          value={productForm.name}
+                          onChange={e => setProductForm({...productForm, name: e.target.value})}
+                          className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
+                          placeholder="Ex: Tacos Mixte"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">PRIX (MAD)</label>
+                        <input 
+                          required
+                          type="number" 
+                          value={productForm.price}
+                          onChange={e => setProductForm({...productForm, price: parseFloat(e.target.value)})}
+                          className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
+                          placeholder="0.00"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">CATÉGORIE</label>
+                        <select 
+                          required
+                          value={productForm.category}
+                          onChange={e => setProductForm({...productForm, category: e.target.value})}
+                          className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold appearance-none"
+                        >
+                          {CATEGORIES.map(cat => (
+                            <option key={cat} value={cat}>{cat}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">URL DE L'IMAGE</label>
+                        <input 
+                          type="url" 
+                          value={productForm.image_url}
+                          onChange={e => setProductForm({...productForm, image_url: e.target.value})}
+                          className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
+                          placeholder="https://images.unsplash.com/..."
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">DESCRIPTION</label>
+                        <textarea 
+                          value={productForm.description}
+                          onChange={e => setProductForm({...productForm, description: e.target.value})}
+                          className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold h-[124px] resize-none"
+                          placeholder="Description du produit..."
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4 ml-4">
+                    <input 
+                      type="checkbox" 
+                      id="is_active"
+                      checked={productForm.is_active}
+                      onChange={e => setProductForm({...productForm, is_active: e.target.checked})}
+                      className="w-5 h-5 accent-[#FFD000]"
+                    />
+                    <label htmlFor="is_active" className="text-sm font-bold text-gray-400 cursor-pointer">Produit actif et visible sur le menu</label>
+                  </div>
+
+                  <div className="flex gap-4 pt-4">
+                    <button 
+                      type="button"
+                      onClick={() => setIsProductModalOpen(false)}
+                      className="flex-1 bg-white/5 text-white py-4 rounded-2xl font-black text-sm hover:bg-white/10 transition-colors"
+                    >
+                      ANNULER
+                    </button>
+                    <button 
+                      type="submit"
+                      className="flex-1 bg-[#FFD000] text-black py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-[#FFD000]/20"
+                    >
+                      ENREGISTRER
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Delete Confirmation Modal */}
+        <AnimatePresence>
+          {isDeleteModalOpen && (
+            <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsDeleteModalOpen(false)}
+                className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+              />
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="relative w-full max-w-md bg-[#111] border border-white/10 rounded-[40px] p-8 shadow-2xl text-center"
+              >
+                <div className="w-20 h-20 bg-red-500/10 rounded-[32px] flex items-center justify-center text-red-500 mx-auto mb-6">
+                  <Trash2 size={40} />
+                </div>
+                
+                <h2 className="text-2xl font-black tracking-tighter mb-2 uppercase italic">
+                  Confirmation
+                </h2>
+                <p className="text-gray-400 font-bold mb-8">
+                  Êtes-vous sûr de vouloir supprimer ce produit ?<br />
+                  <span className="text-red-500/80 text-sm">Cette action est irréversible.</span>
+                </p>
+                
+                <div className="flex gap-4">
+                  <button 
+                    onClick={() => setIsDeleteModalOpen(false)}
+                    className="flex-1 bg-white/5 text-white py-4 rounded-2xl font-black text-sm hover:bg-white/10 transition-colors"
+                  >
+                    ANNULER
+                  </button>
+                  <button 
+                    onClick={confirmDeleteProduct}
+                    className="flex-1 bg-red-500 text-white py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-red-500/20"
+                  >
+                    SUPPRIMER
+                  </button>
+                </div>
               </motion.div>
             </div>
           )}
