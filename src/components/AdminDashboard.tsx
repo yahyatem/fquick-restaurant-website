@@ -30,7 +30,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { Order, Analytics, OrderItem, Livreur, Client, MenuItem, Category } from "../types";
+import { Order, Analytics, OrderItem, Livreur, Client, MenuItem, Category, ProductSize } from "../types";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "../lib/utils";
 import { supabase } from "../lib/supabase";
@@ -77,10 +77,10 @@ export default function AdminDashboard() {
   const [productForm, setProductForm] = useState({
     name: "",
     description: "",
-    price: 0,
-    category: "",
+    category_id: "",
     image_url: "",
-    is_active: true
+    is_active: true,
+    sizes: [] as Partial<ProductSize>[]
   });
 
   // Category Modal State
@@ -282,7 +282,7 @@ export default function AdminDashboard() {
         supabase.from('orders').select('*, order_items(*)').order('created_at', { ascending: false }),
         supabase.from('livreurs').select('*').order('created_at', { ascending: false }),
         supabase.from('clients').select('*').order('created_at', { ascending: false }),
-        supabase.from('products').select('*').order('created_at', { ascending: false }),
+        supabase.from('products').select('*, sizes:product_sizes(*)').order('created_at', { ascending: false }),
         supabase.from('categories').select('*').order('created_at', { ascending: false })
       ]);
 
@@ -436,25 +436,67 @@ export default function AdminDashboard() {
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!productForm.name.trim()) return alert("Le nom est requis");
-    if (productForm.price <= 0) return alert("Le prix doit être supérieur à 0");
-    if (!productForm.category) return alert("La catégorie est requise");
+    if (!productForm.category_id) return alert("La catégorie est requise");
+    if (productForm.sizes.length === 0) return alert("Au moins une taille est requise");
 
     try {
+      let productId = editingProduct?.id;
+
+      const productPayload = {
+        name: productForm.name,
+        description: productForm.description,
+        category_id: productForm.category_id,
+        image_url: productForm.image_url,
+        is_active: productForm.is_active
+      };
+
       if (editingProduct) {
         const { error } = await supabase
           .from('products')
-          .update(productForm)
+          .update(productPayload)
           .eq('id', editingProduct.id);
         if (error) throw error;
       } else {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('products')
-          .insert([productForm]);
+          .insert([productPayload])
+          .select()
+          .single();
         if (error) throw error;
+        productId = data.id;
       }
+
+      // Handle sizes: Delete existing and insert new ones (simplest approach)
+      if (productId) {
+        const { error: deleteError } = await supabase
+          .from('product_sizes')
+          .delete()
+          .eq('product_id', productId);
+        if (deleteError) throw deleteError;
+
+        const sizesPayload = productForm.sizes.map(s => ({
+          product_id: productId,
+          size_name: s.size_name,
+          price: s.price,
+          is_default: s.is_default
+        }));
+
+        const { error: insertError } = await supabase
+          .from('product_sizes')
+          .insert(sizesPayload);
+        if (insertError) throw insertError;
+      }
+
       setIsProductModalOpen(false);
       setEditingProduct(null);
-      setProductForm({ name: "", description: "", price: 0, category: categories[0]?.name || "", image_url: "", is_active: true });
+      setProductForm({ 
+        name: "", 
+        description: "", 
+        category_id: "", 
+        image_url: "", 
+        is_active: true,
+        sizes: []
+      });
       fetchData();
     } catch (err) {
       console.error(err);
@@ -470,6 +512,13 @@ export default function AdminDashboard() {
   const confirmDeleteProduct = async () => {
     if (!productToDeleteId) return;
     try {
+      // Delete sizes first (if CASCADE is not set)
+      const { error: sizesError } = await supabase
+        .from('product_sizes')
+        .delete()
+        .eq('product_id', productToDeleteId);
+      if (sizesError) throw sizesError;
+
       const { error } = await supabase
         .from('products')
         .delete()
@@ -1010,10 +1059,10 @@ export default function AdminDashboard() {
                             onClick={() => {
                               setEditingLivreur(livreur);
                               setLivreurForm({ 
-                                full_name: livreur.full_name, 
-                                phone: livreur.phone, 
+                                full_name: livreur.full_name || "", 
+                                phone: livreur.phone || "", 
                                 password: livreur.password || "", 
-                                status: livreur.status 
+                                status: livreur.status || "available" 
                               });
                               setIsLivreurModalOpen(true);
                             }}
@@ -1121,7 +1170,16 @@ export default function AdminDashboard() {
                   <button 
                     onClick={() => {
                       setEditingProduct(null);
-                      setProductForm({ name: "", description: "", price: 0, category: categories[0]?.name || "", image_url: "", is_active: true });
+                      // Select the first active category as default
+                      const defaultCategory = categories.find(c => c.is_active)?.id || categories[0]?.id || "";
+                      setProductForm({ 
+                        name: "", 
+                        description: "", 
+                        category_id: defaultCategory, 
+                        image_url: "", 
+                        is_active: true,
+                        sizes: [{ size_name: "Standard", price: 0, is_default: true }]
+                      });
                       setIsProductModalOpen(true);
                     }}
                     className="w-full md:w-auto flex items-center justify-center gap-2 bg-[#FFD000] text-black px-6 py-4 rounded-2xl font-black text-sm hover:scale-105 transition-transform shadow-lg shadow-[#FFD000]/20"
@@ -1131,65 +1189,84 @@ export default function AdminDashboard() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                  {products.map(product => (
-                    <div key={product.id} className="bg-white/5 border border-white/10 rounded-[40px] overflow-hidden group relative flex flex-col">
-                      <div className="absolute top-4 right-4 flex gap-2 z-10 lg:opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button 
-                          onClick={() => {
-                            setEditingProduct(product);
-                            setProductForm({ 
-                              name: product.name, 
-                              description: product.description || "", 
-                              price: product.price, 
-                              category: product.category, 
-                              image_url: product.image_url || "", 
-                              is_active: product.is_active ?? true 
-                            });
-                            setIsProductModalOpen(true);
-                          }}
-                          className="p-3 bg-black/60 backdrop-blur-md hover:bg-blue-500/20 hover:text-blue-500 rounded-xl transition-all border border-white/10"
-                        >
-                          <Edit size={16} />
-                        </button>
-                        <button 
-                          onClick={() => handleDeleteProduct(product.id)}
-                          className="p-3 bg-black/60 backdrop-blur-md hover:bg-red-500/20 hover:text-red-500 rounded-xl transition-all border border-white/10"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
+                  {products.length > 0 ? (
+                    products.map(product => {
+                      const categoryName = categories.find(c => c.id === product.category_id)?.name || "Sans catégorie";
+                      const minPrice = product.sizes?.length ? Math.min(...product.sizes.map(s => s.price)) : 0;
+                      const maxPrice = product.sizes?.length ? Math.max(...product.sizes.map(s => s.price)) : 0;
+                      const priceDisplay = minPrice === maxPrice ? `${minPrice} MAD` : `${minPrice} - ${maxPrice} MAD`;
 
-                      <div className="h-40 overflow-hidden relative">
-                        <img 
-                          src={product.image_url || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c"} 
-                          alt={product.name}
-                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-                          referrerPolicy="no-referrer"
-                        />
-                        <div className="absolute bottom-4 left-4">
-                          <span className="bg-[#FFD000] text-black text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-wider">
-                            {product.category}
-                          </span>
-                        </div>
-                      </div>
+                      return (
+                        <div key={product.id} className="bg-white/5 border border-white/10 rounded-[40px] overflow-hidden group relative flex flex-col">
+                          <div className="absolute top-4 right-4 flex gap-2 z-10 lg:opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => {
+                                setEditingProduct(product);
+                                setProductForm({ 
+                                  name: product.name || "", 
+                                  description: product.description || "", 
+                                  category_id: product.category_id || "", 
+                                  image_url: product.image_url || "", 
+                                  is_active: product.is_active ?? true,
+                                  sizes: product.sizes || []
+                                });
+                                setIsProductModalOpen(true);
+                              }}
+                              className="p-3 bg-black/60 backdrop-blur-md hover:bg-blue-500/20 hover:text-blue-500 rounded-xl transition-all border border-white/10"
+                            >
+                              <Edit size={16} />
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteProduct(product.id)}
+                              className="p-3 bg-black/60 backdrop-blur-md hover:bg-red-500/20 hover:text-red-500 rounded-xl transition-all border border-white/10"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
 
-                      <div className="p-6 flex flex-col flex-1">
-                        <h3 className="font-black text-xl tracking-tighter mb-2 group-hover:text-[#FFD000] transition-colors">{product.name}</h3>
-                        <p className="text-gray-500 font-medium text-sm line-clamp-2 mb-4 flex-1">
-                          {product.description || "Aucune description fournie."}
-                        </p>
-                        <div className="flex items-center justify-between pt-4 border-t border-white/5">
-                          <span className="text-2xl font-black text-[#FFD000]">{product.price} <span className="text-xs">MAD</span></span>
-                          <span className={cn(
-                            "text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest",
-                            product.is_active ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
-                          )}>
-                            {product.is_active ? "Actif" : "Inactif"}
-                          </span>
+                          <div className="h-40 overflow-hidden relative">
+                            <img 
+                              src={product.image_url || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c"} 
+                              alt={product.name}
+                              className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="absolute bottom-4 left-4">
+                              <span className="bg-[#FFD000] text-black text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-wider">
+                                {categoryName}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="p-6 flex flex-col flex-1">
+                            <h3 className="font-black text-xl tracking-tighter mb-2 group-hover:text-[#FFD000] transition-colors">{product.name}</h3>
+                            <p className="text-gray-500 font-medium text-sm line-clamp-2 mb-4 flex-1">
+                              {product.description || "Aucune description fournie."}
+                            </p>
+                            <div className="flex items-center justify-between pt-4 border-t border-white/5">
+                              <span className="text-sm font-black text-[#FFD000]">{priceDisplay}</span>
+                              <span className={cn(
+                                "text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest",
+                                product.is_active ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
+                              )}>
+                                {product.is_active ? "Actif" : "Inactif"}
+                              </span>
+                            </div>
+                          </div>
                         </div>
+                      );
+                    })
+                  ) : (
+                    <div className="col-span-full py-20 text-center bg-white/5 rounded-[40px] border border-dashed border-white/10">
+                      <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-white/5 mb-6">
+                        <ShoppingBag className="w-10 h-10 text-gray-500" />
                       </div>
+                      <h3 className="text-2xl font-black text-white mb-2">Aucun produit trouvé</h3>
+                      <p className="text-gray-500 max-w-md mx-auto font-bold">
+                        Commencez par ajouter votre premier produit pour qu'il apparaisse ici.
+                      </p>
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
             )}
@@ -1244,9 +1321,9 @@ export default function AdminDashboard() {
                                   onClick={() => {
                                     setEditingCategory(category);
                                     setCategoryForm({ 
-                                      name: category.name, 
-                                      value: category.value, 
-                                      is_active: category.is_active 
+                                      name: category.name || "", 
+                                      value: category.value || "", 
+                                      is_active: category.is_active ?? true 
                                     });
                                     setIsCategoryModalOpen(true);
                                   }}
@@ -1483,7 +1560,7 @@ export default function AdminDashboard() {
                       <input 
                         required
                         type="text" 
-                        value={livreurForm.full_name}
+                        value={livreurForm.full_name || ""}
                         onChange={e => setLivreurForm({...livreurForm, full_name: e.target.value})}
                         className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
                         placeholder="Ex: Ahmed Benani"
@@ -1494,7 +1571,7 @@ export default function AdminDashboard() {
                       <input 
                         required
                         type="tel" 
-                        value={livreurForm.phone}
+                        value={livreurForm.phone || ""}
                         onChange={e => setLivreurForm({...livreurForm, phone: e.target.value})}
                         className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
                         placeholder="06..."
@@ -1505,7 +1582,7 @@ export default function AdminDashboard() {
                       <input 
                         required
                         type="text" 
-                        value={livreurForm.password}
+                        value={livreurForm.password || ""}
                         onChange={e => setLivreurForm({...livreurForm, password: e.target.value})}
                         className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
                         placeholder="••••••••"
@@ -1514,7 +1591,7 @@ export default function AdminDashboard() {
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">STATUT INITIAL</label>
                       <select 
-                        value={livreurForm.status}
+                        value={livreurForm.status || "available"}
                         onChange={e => setLivreurForm({...livreurForm, status: e.target.value as any})}
                         className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold appearance-none"
                       >
@@ -1574,34 +1651,23 @@ export default function AdminDashboard() {
                         <input 
                           required
                           type="text" 
-                          value={productForm.name}
+                          value={productForm.name || ""}
                           onChange={e => setProductForm({...productForm, name: e.target.value})}
                           className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
                           placeholder="Ex: Tacos Mixte"
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">PRIX (MAD)</label>
-                        <input 
-                          required
-                          type="number" 
-                          value={productForm.price}
-                          onChange={e => setProductForm({...productForm, price: parseFloat(e.target.value)})}
-                          className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
-                          placeholder="0.00"
-                        />
-                      </div>
-                      <div className="space-y-2">
                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">CATÉGORIE</label>
                         <select 
                           required
-                          value={productForm.category}
-                          onChange={e => setProductForm({...productForm, category: e.target.value})}
+                          value={productForm.category_id || ""}
+                          onChange={e => setProductForm({...productForm, category_id: e.target.value})}
                           className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold appearance-none"
                         >
                           <option value="" disabled>Sélectionner une catégorie</option>
                           {categories.filter(c => c.is_active).map(cat => (
-                            <option key={cat.id} value={cat.name}>{cat.name}</option>
+                            <option key={cat.id} value={cat.id}>{cat.name}</option>
                           ))}
                         </select>
                       </div>
@@ -1612,7 +1678,7 @@ export default function AdminDashboard() {
                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">URL DE L'IMAGE</label>
                         <input 
                           type="url" 
-                          value={productForm.image_url}
+                          value={productForm.image_url || ""}
                           onChange={e => setProductForm({...productForm, image_url: e.target.value})}
                           className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
                           placeholder="https://images.unsplash.com/..."
@@ -1621,12 +1687,93 @@ export default function AdminDashboard() {
                       <div className="space-y-2">
                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">DESCRIPTION</label>
                         <textarea 
-                          value={productForm.description}
+                          value={productForm.description || ""}
                           onChange={e => setProductForm({...productForm, description: e.target.value})}
                           className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold h-[124px] resize-none"
                           placeholder="Description du produit..."
                         />
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Size Management */}
+                  <div className="space-y-4 pt-4 border-t border-white/5">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">TAILLES ET PRIX</label>
+                      <button 
+                        type="button"
+                        onClick={() => setProductForm({
+                          ...productForm,
+                          sizes: [...productForm.sizes, { size_name: "", price: 0, is_default: false }]
+                        })}
+                        className="text-[#FFD000] text-xs font-black flex items-center gap-1 hover:underline"
+                      >
+                        <Plus size={14} /> AJOUTER UNE TAILLE
+                      </button>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      {productForm.sizes.map((size, index) => (
+                        <div key={index} className="flex items-center gap-3 bg-black/40 p-4 rounded-2xl border border-white/5">
+                          <div className="flex-1">
+                            <input 
+                              required
+                              type="text"
+                              value={size.size_name}
+                              onChange={e => {
+                                const newSizes = [...productForm.sizes];
+                                newSizes[index].size_name = e.target.value;
+                                setProductForm({...productForm, sizes: newSizes});
+                              }}
+                              placeholder="Nom (ex: XL, 33cl...)"
+                              className="w-full bg-transparent border-none outline-none font-bold text-sm"
+                            />
+                          </div>
+                          <div className="w-24">
+                            <input 
+                              required
+                              type="number"
+                              value={size.price}
+                              onChange={e => {
+                                const newSizes = [...productForm.sizes];
+                                newSizes[index].price = parseFloat(e.target.value) || 0;
+                                setProductForm({...productForm, sizes: newSizes});
+                              }}
+                              placeholder="Prix"
+                              className="w-full bg-transparent border-none outline-none font-black text-sm text-[#FFD000]"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newSizes = productForm.sizes.map((s, i) => ({
+                                  ...s,
+                                  is_default: i === index
+                                }));
+                                setProductForm({...productForm, sizes: newSizes});
+                              }}
+                              className={cn(
+                                "p-2 rounded-lg transition-all",
+                                size.is_default ? "bg-[#FFD000] text-black" : "bg-white/5 text-gray-500 hover:text-white"
+                              )}
+                              title="Définir comme taille par défaut"
+                            >
+                              <CheckCircle2 size={16} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newSizes = productForm.sizes.filter((_, i) => i !== index);
+                                setProductForm({...productForm, sizes: newSizes});
+                              }}
+                              className="p-2 bg-white/5 text-gray-500 hover:text-red-500 rounded-lg transition-all"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
 
@@ -1737,11 +1884,11 @@ export default function AdminDashboard() {
                       <input 
                         required
                         type="text" 
-                        value={categoryForm.name}
+                        value={categoryForm.name || ""}
                         onChange={e => {
                           const name = e.target.value;
                           const value = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-                          setCategoryForm({...categoryForm, name, value: editingCategory ? categoryForm.value : value});
+                          setCategoryForm({...categoryForm, name, value: editingCategory ? (categoryForm.value || "") : value});
                         }}
                         className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
                         placeholder="Ex: Boissons"
@@ -1752,7 +1899,7 @@ export default function AdminDashboard() {
                       <input 
                         required
                         type="text" 
-                        value={categoryForm.value}
+                        value={categoryForm.value || ""}
                         onChange={e => setCategoryForm({...categoryForm, value: e.target.value})}
                         className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold font-mono"
                         placeholder="Ex: boissons"

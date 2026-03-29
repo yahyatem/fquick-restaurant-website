@@ -1,17 +1,28 @@
+export interface ProductSize {
+  id: string;
+  product_id: string;
+  size_name: string;
+  price: number;
+  is_default: boolean;
+}
+
 export interface MenuItem {
   id: string;
   name: string;
   description?: string;
-  price: number;
-  category: string;
+  category_id: string;
+  category?: Category;
   image_url?: string;
   is_active?: boolean;
   created_at?: string;
+  sizes: ProductSize[];
 }
 
 export interface CartItem {
   id: string;
+  product_id: string;
   name: string;
+  size_name: string;
   price: number;
   quantity: number;
 }
@@ -55,6 +66,7 @@ export interface OrderItem {
   order_id: string;
   product_id: string;
   product_name: string;
+  size_name?: string;
   unit_price: number;
   quantity: number;
   subtotal: number;

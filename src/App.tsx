@@ -2,7 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Link, useLocation } from "react
 import { useState, useEffect } from "react";
 import { ShoppingCart, Menu as MenuIcon, X, Phone, MapPin, LayoutDashboard } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { CartItem, MenuItem } from "./types";
+import { CartItem, MenuItem, ProductSize } from "./types";
 import { BUSINESS_INFO } from "./constants";
 import { supabase } from "./lib/supabase";
 import Hero from "./components/Hero";
@@ -171,13 +171,22 @@ export default function App() {
     };
   }, []);
 
-  const addToCart = (product: MenuItem) => {
+  const addToCart = (product: MenuItem, size: ProductSize) => {
+    const cartItemId = `${product.id}-${size.size_name}`;
     setCart(prev => {
-      const existing = prev.find(item => item.id === product.id);
+      const existing = prev.find(item => item.id === cartItemId);
       if (existing) {
-        return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
+        return prev.map(item => item.id === cartItemId ? { ...item, quantity: item.quantity + 1 } : item);
       }
-      return [...prev, { ...product, quantity: 1 }];
+      const newItem: CartItem = {
+        id: cartItemId,
+        product_id: product.id,
+        name: product.name,
+        size_name: size.size_name,
+        price: size.price,
+        quantity: 1
+      };
+      return [...prev, newItem];
     });
   };
 

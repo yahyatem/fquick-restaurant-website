@@ -2,14 +2,29 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { X, Plus, Minus, Send, ShoppingBag, MapPin, Sparkles } from "lucide-react";
-import { CartItem, MenuItem } from "../types";
+import { CartItem, MenuItem, ProductSize } from "../types";
 import { BUSINESS_INFO } from "../constants";
 import { supabase } from "../lib/supabase";
 
 const SUGGESTIONS: MenuItem[] = [
-  { id: 'upsell-frites', name: 'Frites Croustillantes', price: 15, category: 'Sides' },
-  { id: 'upsell-coca', name: 'Coca-Cola 33cl', price: 10, category: 'Drinks' },
-  { id: 'upsell-sauce', name: 'Sauce Algérienne', price: 5, category: 'Sauces' },
+  { 
+    id: 'upsell-frites', 
+    name: 'Frites Croustillantes', 
+    category_id: 'upsell', 
+    sizes: [{ id: 's1', product_id: 'upsell-frites', size_name: 'Portion', price: 15, is_default: true }] 
+  },
+  { 
+    id: 'upsell-coca', 
+    name: 'Coca-Cola 33cl', 
+    category_id: 'upsell', 
+    sizes: [{ id: 's2', product_id: 'upsell-coca', size_name: '33cl', price: 10, is_default: true }] 
+  },
+  { 
+    id: 'upsell-sauce', 
+    name: 'Sauce Algérienne', 
+    category_id: 'upsell', 
+    sizes: [{ id: 's3', product_id: 'upsell-sauce', size_name: 'Pot', price: 5, is_default: true }] 
+  },
 ];
 
 interface CartProps {
@@ -17,7 +32,7 @@ interface CartProps {
   onClose: () => void;
   onUpdateQuantity: (id: string, delta: number) => void;
   onClearCart: () => void;
-  onAddToCart: (product: MenuItem) => void;
+  onAddToCart: (product: MenuItem, size: ProductSize) => void;
   settings: any;
 }
 
@@ -149,8 +164,9 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
       // 3. Fix order_items insert
       const orderItems = items.map(item => ({
         order_id: order.id,
-        product_id: item.id,
+        product_id: item.product_id,
         product_name: item.name,
+        size_name: item.size_name,
         unit_price: item.price,
         quantity: item.quantity,
         subtotal: item.price * item.quantity
@@ -230,7 +246,12 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
                 {items.map(item => (
                   <div key={item.id} className="flex items-center gap-4 group">
                     <div className="flex-1">
-                      <h4 className="font-bold text-white group-hover:text-[#FFD000] transition-colors">{item.name}</h4>
+                      <h4 className="font-bold text-white group-hover:text-[#FFD000] transition-colors">
+                        {item.name}
+                        {item.size_name && (
+                          <span className="ml-2 text-xs text-gray-500 font-medium">({item.size_name})</span>
+                        )}
+                      </h4>
                       <p className="text-sm text-gray-500 font-medium">{item.price} MAD</p>
                     </div>
                     <div className="flex items-center gap-3 bg-white/5 rounded-xl p-1 border border-white/10">
@@ -262,12 +283,12 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
                   {SUGGESTIONS.filter(s => !items.find(i => i.id === s.id)).map(suggestion => (
                     <button
                       key={suggestion.id}
-                      onClick={() => onAddToCart(suggestion)}
+                      onClick={() => onAddToCart(suggestion, suggestion.sizes[0])}
                       className="flex items-center justify-between p-3 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all group"
                     >
                       <div className="text-left">
                         <p className="text-sm font-bold">{suggestion.name}</p>
-                        <p className="text-xs text-[#FFD000] font-black">{suggestion.price} MAD</p>
+                        <p className="text-xs text-[#FFD000] font-black">{suggestion.sizes[0]?.price || 0} MAD</p>
                       </div>
                       <Plus className="text-gray-500 group-hover:text-[#FFD000]" size={18} />
                     </button>
