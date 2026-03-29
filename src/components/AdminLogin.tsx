@@ -1,18 +1,39 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Lock, ArrowRight } from "lucide-react";
 import { motion } from "motion/react";
+import { supabase } from "../lib/supabase";
 
 export default function AdminLogin() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [adminPassword, setAdminPassword] = useState("adminFquik@3");
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isExpired = searchParams.get("expired") === "true";
 
+  useEffect(() => {
+    const fetchAdminPassword = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('settings')
+          .select('value')
+          .eq('key', 'admin_password')
+          .single();
+        
+        if (data && !error) {
+          setAdminPassword(data.value);
+        }
+      } catch (err) {
+        console.error("Error fetching admin password:", err);
+      }
+    };
+    fetchAdminPassword();
+  }, []);
+
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === "adminFquik@3") {
+    if (password === adminPassword) {
       localStorage.setItem("admin_token", "authenticated");
       navigate("/admin");
     } else {

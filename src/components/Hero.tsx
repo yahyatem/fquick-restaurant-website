@@ -1,13 +1,16 @@
 import { motion } from "motion/react";
 import { ArrowRight } from "lucide-react";
 
-export default function Hero() {
+export default function Hero({ settings }: { settings: any }) {
+  const isOpen = settings.is_open !== false;
+  const closedMessage = settings.closed_message || "Nous sommes actuellement fermés. Revenez bientôt !";
+
   return (
     <section className="relative h-screen flex items-center justify-center overflow-hidden">
       {/* Background with overlay */}
       <div className="absolute inset-0 z-0">
         <img 
-          src="https://images.unsplash.com/photo-1561758033-d89a9ad46330?auto=format&fit=crop&q=80&w=2000" 
+          src={settings.logo_url || "https://images.unsplash.com/photo-1561758033-d89a9ad46330?auto=format&fit=crop&q=80&w=2000"} 
           alt="Fast Food" 
           loading="lazy"
           className="w-full h-full object-cover"
@@ -15,6 +18,16 @@ export default function Hero() {
         />
         <div className="absolute inset-0 bg-gradient-to-r from-black via-black/60 to-transparent" />
       </div>
+
+      {!isOpen && (
+        <div className="absolute top-24 left-0 right-0 z-20 px-6">
+          <div className="max-w-7xl mx-auto">
+            <div className="bg-red-500 text-white px-6 py-3 rounded-2xl font-black text-sm uppercase tracking-widest text-center shadow-2xl shadow-red-500/20 animate-pulse">
+              {closedMessage}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="relative z-10 max-w-7xl mx-auto px-6 w-full">
         <motion.div

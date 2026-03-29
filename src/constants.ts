@@ -48,13 +48,3 @@ export const MENU_DATA: MenuItem[] = [
   { id: "pa4", name: "Pasticcio Poulet", price: 45, category: "Pasticcio", image_url: "https://images.unsplash.com/photo-1559058789-672da06263d8?auto=format&fit=crop&q=80&w=600" },
   { id: "pa5", name: "Pasticcio Mixte", price: 49, category: "Pasticcio", image_url: "https://images.unsplash.com/photo-1543339308-43e59d6b73a6?auto=format&fit=crop&q=80&w=600" },
 ];
-
-export const CATEGORIES = [
-  "Boissons",
-  "Tacos",
-  "Chawarma",
-  "Poutine",
-  "Sandwich",
-  "Pizza",
-  "Pasticcio",
-];

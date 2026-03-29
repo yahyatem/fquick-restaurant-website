@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
-import { Bike, MapPin, Phone, Package, LogOut, CheckCircle2, Clock, ExternalLink, ArrowRight, History, User, Navigation, Truck } from "lucide-react";
+import { Bike, MapPin, Phone, Package, LogOut, CheckCircle2, Clock, ExternalLink, ArrowRight, History, User as UserIcon, Navigation, Truck } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { Order, OrderItem } from "../types";
 import { format } from "date-fns";
@@ -174,7 +174,7 @@ export default function LivreurPage() {
           <TabButton 
             active={activeTab === 'profile'} 
             onClick={() => setActiveTab('profile')} 
-            icon={<User size={18} />} 
+            icon={<UserIcon size={18} />} 
             label="Profil" 
           />
         </div>
@@ -297,7 +297,7 @@ export default function LivreurPage() {
             >
               <div className="bg-[#111] border border-white/10 rounded-[32px] sm:rounded-[40px] p-6 sm:p-10 text-center shadow-2xl">
                 <div className="w-20 h-20 sm:w-24 sm:h-24 bg-[#FFD000] rounded-[28px] sm:rounded-[32px] flex items-center justify-center text-black mx-auto mb-6 sm:mb-8 rotate-6 shadow-xl shadow-[#FFD000]/20">
-                  <User size={40} sm:size={48} />
+                  <UserIcon className="w-10 h-10 sm:w-12 sm:h-12" />
                 </div>
                 <h2 className="text-2xl sm:text-3xl font-black tracking-tighter mb-2 uppercase italic">{livreur?.full_name}</h2>
                 <p className="text-[#FFD000] font-black tracking-widest text-xs sm:text-sm mb-8 sm:mb-10 uppercase">{livreur?.phone}</p>

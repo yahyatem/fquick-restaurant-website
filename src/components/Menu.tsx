@@ -1,8 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { motion } from "motion/react";
 import { Plus, Star } from "lucide-react";
-import { CATEGORIES } from "../constants";
-import { MenuItem } from "../types";
+import { Order, Analytics, OrderItem, Livreur, Client, MenuItem, Category } from "../types";
 import { cn } from "../lib/utils";
 import { supabase } from "../lib/supabase";
 
@@ -40,16 +39,32 @@ const ProductImage = ({ src, alt }: { src: string; alt: string }) => {
   );
 };
 
-export default function Menu({ onAddToCart }: { onAddToCart: (item: MenuItem) => void }) {
-  const [activeCategory, setActiveCategory] = useState(CATEGORIES[0]);
+export default function Menu({ onAddToCart, settings }: { onAddToCart: (item: MenuItem) => void; settings: any }) {
+  const [activeCategory, setActiveCategory] = useState("");
+  const [categories, setCategories] = useState<Category[]>([]);
   const [bestSellers, setBestSellers] = useState<string[]>([]);
   const [products, setProducts] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const isOpen = settings.is_open !== false;
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       try {
+        // Fetch active categories
+        const { data: categoriesData, error: categoriesError } = await supabase
+          .from('categories')
+          .select('*')
+          .eq('is_active', true)
+          .order('created_at', { ascending: true });
+        
+        if (categoriesError) throw categoriesError;
+        setCategories(categoriesData || []);
+        if (categoriesData && categoriesData.length > 0) {
+          setActiveCategory(categoriesData[0].name);
+        }
+
         // Fetch active products
         const { data: productsData, error: productsError } = await supabase
           .from('products')
@@ -111,18 +126,18 @@ export default function Menu({ onAddToCart }: { onAddToCart: (item: MenuItem) =>
           </div>
           
           <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-            {CATEGORIES.map(cat => (
+            {categories.map(cat => (
               <button
-                key={cat}
-                onClick={() => setActiveCategory(cat)}
+                key={cat.id}
+                onClick={() => setActiveCategory(cat.name)}
                 className={cn(
                   "px-6 py-2 rounded-full font-bold whitespace-nowrap transition-all",
-                  activeCategory === cat 
+                  activeCategory === cat.name 
                     ? "bg-[#FFD000] text-black" 
                     : "bg-white/5 text-white hover:bg-white/10"
                 )}
               >
-                {cat}
+                {cat.name}
               </button>
             ))}
           </div>
@@ -173,8 +188,14 @@ export default function Menu({ onAddToCart }: { onAddToCart: (item: MenuItem) =>
                 <div className="flex items-center justify-between mt-auto pt-4 border-t border-white/5">
                   <span className="text-2xl font-black text-[#FFD000]">{item.price} <span className="text-xs">MAD</span></span>
                   <button
-                    onClick={() => onAddToCart(item)}
-                    className="bg-[#FFD000] text-black p-3 rounded-2xl hover:bg-white transition-all active:scale-95 shadow-lg shadow-[#FFD000]/10"
+                    onClick={() => isOpen && onAddToCart(item)}
+                    disabled={!isOpen}
+                    className={cn(
+                      "p-3 rounded-2xl transition-all active:scale-95 shadow-lg",
+                      isOpen 
+                        ? "bg-[#FFD000] text-black hover:bg-white shadow-[#FFD000]/10" 
+                        : "bg-white/5 text-gray-500 cursor-not-allowed border border-white/10"
+                    )}
                   >
                     <Plus size={20} strokeWidth={3} />
                   </button>

@@ -4,6 +4,7 @@ import { ShoppingCart, Menu as MenuIcon, X, Phone, MapPin, LayoutDashboard } fro
 import { motion, AnimatePresence } from "motion/react";
 import { CartItem, MenuItem } from "./types";
 import { BUSINESS_INFO } from "./constants";
+import { supabase } from "./lib/supabase";
 import Hero from "./components/Hero";
 import Menu from "./components/Menu";
 import Cart from "./components/Cart";
@@ -95,22 +96,26 @@ function Navbar({ cartCount, onOpenCart }: { cartCount: number; onOpenCart: () =
   );
 }
 
-function Footer() {
+function Footer({ settings }: { settings: any }) {
   const location = useLocation();
   if (location.pathname.startsWith("/admin")) return null;
+
+  const restaurantName = settings.restaurant_name || "F-QUICK";
+  const address = settings.restaurant_address || BUSINESS_INFO.address;
+  const phone = settings.restaurant_phone || BUSINESS_INFO.phone;
 
   return (
     <footer className="bg-black text-white py-12 px-6 border-t border-white/10">
       <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-12">
         <div>
-          <h3 className="text-2xl font-black text-[#FFD000] mb-4">F-QUICK</h3>
+          <h3 className="text-2xl font-black text-[#FFD000] mb-4">{restaurantName}</h3>
           <p className="text-gray-400 font-medium">Le goût de la rapidité et de la qualité à Fès.</p>
         </div>
         <div>
           <h4 className="font-bold mb-4 text-[#FFD000]">CONTACT</h4>
           <div className="space-y-2 text-gray-400">
-            <p className="flex items-center gap-2"><MapPin size={16} /> {BUSINESS_INFO.address}</p>
-            <p className="flex items-center gap-2"><Phone size={16} /> {BUSINESS_INFO.phone}</p>
+            <p className="flex items-center gap-2"><MapPin size={16} /> {address}</p>
+            <p className="flex items-center gap-2"><Phone size={16} /> {phone}</p>
           </div>
         </div>
         <div>
@@ -119,7 +124,7 @@ function Footer() {
         </div>
       </div>
       <div className="max-w-7xl mx-auto mt-12 pt-8 border-t border-white/5 text-center text-gray-500 text-sm">
-        &copy; {new Date().getFullYear()} F-Quick. Tous droits réservés.
+        &copy; {new Date().getFullYear()} {restaurantName}. Tous droits réservés.
       </div>
     </footer>
   );
@@ -128,6 +133,43 @@ function Footer() {
 export default function App() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [settings, setSettings] = useState<Record<string, any>>({});
+
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const { data, error } = await supabase.from('settings').select('*');
+        if (data && !error) {
+          const settingsMap: Record<string, any> = {};
+          data.forEach((s: any) => {
+            settingsMap[s.key] = s.value;
+          });
+          setSettings(settingsMap);
+        }
+      } catch (err) {
+        console.error("Error fetching settings:", err);
+      }
+    };
+    fetchSettings();
+
+    // Subscribe to settings changes
+    const subscription = supabase
+      .channel('settings_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, (payload) => {
+        setSettings(prev => {
+          const newSettings = { ...prev };
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            newSettings[payload.new.key] = payload.new.value;
+          }
+          return newSettings;
+        });
+      })
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   const addToCart = (product: MenuItem) => {
     setCart(prev => {
@@ -159,9 +201,9 @@ export default function App() {
         <Routes>
           <Route path="/" element={
             <main>
-              <Hero />
-              <Menu onAddToCart={addToCart} />
-              <Contact />
+              <Hero settings={settings} />
+              <Menu onAddToCart={addToCart} settings={settings} />
+              <Contact settings={settings} />
             </main>
           } />
           <Route path="/admin/login" element={<AdminLogin />} />
@@ -171,7 +213,7 @@ export default function App() {
           <Route path="/tracking/:id" element={<TrackingPage />} />
         </Routes>
 
-        <Footer />
+        <Footer settings={settings} />
 
         <AnimatePresence>
           {isCartOpen && (
@@ -181,6 +223,7 @@ export default function App() {
               onUpdateQuantity={updateQuantity}
               onClearCart={clearCart}
               onAddToCart={addToCart}
+              settings={settings}
             />
           )}
         </AnimatePresence>

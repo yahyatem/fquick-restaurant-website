@@ -1,7 +1,10 @@
 import { MapPin, Phone, Clock, Instagram, Facebook } from "lucide-react";
 import { BUSINESS_INFO } from "../constants";
 
-export default function Contact() {
+export default function Contact({ settings }: { settings: any }) {
+  const address = settings.restaurant_address || BUSINESS_INFO.address;
+  const phone = settings.restaurant_phone || BUSINESS_INFO.phone;
+
   return (
     <section id="contact" className="py-24 px-6 bg-black">
       <div className="max-w-7xl mx-auto">
@@ -16,7 +19,7 @@ export default function Contact() {
                 </div>
                 <div>
                   <h4 className="text-xl font-black mb-1">ADRESSE</h4>
-                  <p className="text-gray-400 font-medium">{BUSINESS_INFO.address}</p>
+                  <p className="text-gray-400 font-medium">{address}</p>
                 </div>
               </div>
 
@@ -26,7 +29,7 @@ export default function Contact() {
                 </div>
                 <div>
                   <h4 className="text-xl font-black mb-1">TÉLÉPHONE</h4>
-                  <p className="text-gray-400 font-medium">{BUSINESS_INFO.phone}</p>
+                  <p className="text-gray-400 font-medium">{phone}</p>
                 </div>
               </div>
 

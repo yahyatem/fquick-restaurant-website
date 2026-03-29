@@ -18,9 +18,10 @@ interface CartProps {
   onUpdateQuantity: (id: string, delta: number) => void;
   onClearCart: () => void;
   onAddToCart: (product: MenuItem) => void;
+  settings: any;
 }
 
-export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, onAddToCart }: CartProps) {
+export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, onAddToCart, settings }: CartProps) {
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -31,6 +32,10 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
+
+  const deliveryFee = settings.delivery_fee || 0;
+  const minOrder = settings.min_order || 0;
+  const isOpen = settings.is_open !== false;
 
   const captureLocation = () => {
     setIsCapturing(true);
@@ -61,7 +66,8 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
     }
   };
 
-  const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const total = subtotal + deliveryFee;
 
   const handleCheckout = async () => {
     // 4. Validate data before insert
@@ -72,6 +78,16 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
 
     if (items.length === 0) {
       alert("Votre panier est vide.");
+      return;
+    }
+
+    if (subtotal < minOrder) {
+      alert(`Le montant minimum de commande est de ${minOrder} MAD.`);
+      return;
+    }
+
+    if (!isOpen) {
+      alert(settings.closed_message || "Le restaurant est actuellement fermé.");
       return;
     }
 
@@ -264,18 +280,36 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
 
         {items.length > 0 && (
           <div className="p-6 bg-white/5 border-t border-white/10 space-y-6">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between text-xl font-black">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm text-gray-400 font-bold">
+                <span>SOUS-TOTAL</span>
+                <span>{subtotal} MAD</span>
+              </div>
+              <div className="flex items-center justify-between text-sm text-gray-400 font-bold">
+                <span>LIVRAISON</span>
+                <span>{deliveryFee} MAD</span>
+              </div>
+              <div className="flex items-center justify-between text-xl font-black pt-2 border-t border-white/5">
                 <span>TOTAL</span>
                 <span className="text-[#FFD000]">{total} MAD</span>
               </div>
-              <button
-                onClick={() => setIsModalOpen(true)}
-                className="w-full bg-[#FFD000] text-black py-4 rounded-2xl font-black text-lg flex items-center justify-center gap-2 hover:scale-[1.02] transition-transform active:scale-95"
-              >
-                COMMANDER <Send size={20} />
-              </button>
             </div>
+            
+            {subtotal < minOrder && (
+              <div className="p-3 bg-orange-500/10 border border-orange-500/20 rounded-xl text-center">
+                <p className="text-[10px] text-orange-500 font-black uppercase tracking-widest">
+                  Minimum de commande: {minOrder} MAD
+                </p>
+              </div>
+            )}
+
+            <button
+              onClick={() => setIsModalOpen(true)}
+              disabled={subtotal < minOrder || !isOpen}
+              className="w-full bg-[#FFD000] text-black py-4 rounded-2xl font-black text-lg flex items-center justify-center gap-2 hover:scale-[1.02] transition-transform active:scale-95 disabled:opacity-50 disabled:scale-100"
+            >
+              {!isOpen ? "RESTAURANT FERMÉ" : "COMMANDER"} <Send size={20} />
+            </button>
           </div>
         )}
       </motion.div>

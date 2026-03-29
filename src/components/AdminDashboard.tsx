@@ -14,7 +14,7 @@ import {
   Clock,
   FileText,
   ExternalLink,
-  User,
+  User as UserIcon,
   Truck,
   UserCheck,
   Plus,
@@ -26,24 +26,26 @@ import {
   X,
   Package,
   Layers,
-  Settings,
   BarChart3
 } from "lucide-react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { Order, Analytics, OrderItem, Livreur, Client, MenuItem } from "../types";
+import { Order, Analytics, OrderItem, Livreur, Client, MenuItem, Category } from "../types";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "../lib/utils";
 import { supabase } from "../lib/supabase";
-import { CATEGORIES } from "../constants";
-import jsPDF from "jspdf";
+import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import { 
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+  BarChart, Bar, PieChart, Pie, Cell, Legend 
+} from 'recharts';
 
 interface OrderWithItems extends Order {
   order_items: OrderItem[];
 }
 
-type AdminTab = 'dashboard' | 'orders' | 'livreurs' | 'clients' | 'products' | 'categories' | 'settings' | 'analytics';
+type AdminTab = 'dashboard' | 'orders' | 'livreurs' | 'clients' | 'products' | 'categories' | 'analytics';
 
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
@@ -52,6 +54,7 @@ export default function AdminDashboard() {
   const [livreurs, setLivreurs] = useState<Livreur[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<MenuItem[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [notifications, setNotifications] = useState<OrderWithItems[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -75,13 +78,26 @@ export default function AdminDashboard() {
     name: "",
     description: "",
     price: 0,
-    category: CATEGORIES[0],
+    category: "",
     image_url: "",
+    is_active: true
+  });
+
+  // Category Modal State
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [isCategoryDeleteModalOpen, setIsCategoryDeleteModalOpen] = useState(false);
+  const [categoryToDeleteId, setCategoryToDeleteId] = useState<string | null>(null);
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [categoryForm, setCategoryForm] = useState({
+    name: "",
+    value: "",
     is_active: true
   });
 
   const [orderFilter, setOrderFilter] = useState<Order['status'] | 'all'>('all');
   const [livreurFilter, setLivreurFilter] = useState<string>('all');
+  const [analyticsFilter, setAnalyticsFilter] = useState<'today' | '7days' | '30days'>('30days');
+
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -109,7 +125,6 @@ export default function AdminDashboard() {
         
         setOrders(prev => {
           const updatedOrders = [orderWithItems, ...prev];
-          setAnalytics(calculateAnalytics(updatedOrders));
           return updatedOrders;
         });
         setNotifications(prev => [orderWithItems, ...prev]);
@@ -125,13 +140,35 @@ export default function AdminDashboard() {
     };
   }, [navigate]);
 
-  const calculateAnalytics = (orders: OrderWithItems[]) => {
-    const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
-    const orderCount = orders.length;
+  const calculateAnalytics = (
+    orders: OrderWithItems[], 
+    clients: Client[], 
+    livreurs: Livreur[], 
+    filter: 'today' | '7days' | '30days'
+  ): Analytics => {
+    const now = new Date();
+    const filteredOrders = orders.filter(o => {
+      const orderDate = new Date(o.created_at);
+      if (filter === 'today') {
+        return orderDate.toDateString() === now.toDateString();
+      } else if (filter === '7days') {
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        return orderDate >= sevenDaysAgo;
+      } else if (filter === '30days') {
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        return orderDate >= thirtyDaysAgo;
+      }
+      return true;
+    });
+
+    const totalRevenue = filteredOrders.reduce((sum, o) => sum + o.total, 0);
+    const orderCount = filteredOrders.length;
+    const totalClients = clients.length;
+    const totalLivreurs = livreurs.length;
 
     // Top Products
     const productMap: Record<string, number> = {};
-    orders.forEach(o => {
+    filteredOrders.forEach(o => {
       o.order_items?.forEach(i => {
         productMap[i.product_name] = (productMap[i.product_name] || 0) + i.quantity;
       });
@@ -143,7 +180,7 @@ export default function AdminDashboard() {
 
     // Top Clients
     const clientMap: Record<string, { name: string, total: number }> = {};
-    orders.forEach(o => {
+    filteredOrders.forEach(o => {
       if (!clientMap[o.customer_phone]) {
         clientMap[o.customer_phone] = { name: o.customer_name, total: 0 };
       }
@@ -156,9 +193,11 @@ export default function AdminDashboard() {
 
     // Top Delivery Person
     const livreurMap: Record<string, number> = {};
-    orders.forEach(o => {
+    filteredOrders.forEach(o => {
       if (o.livreur_id) {
-        livreurMap[o.livreur_id] = (livreurMap[o.livreur_id] || 0) + 1;
+        const livreur = livreurs.find(l => l.id === o.livreur_id);
+        const name = livreur ? livreur.full_name : "Inconnu";
+        livreurMap[name] = (livreurMap[name] || 0) + 1;
       }
     });
     const topLivreurs = Object.entries(livreurMap)
@@ -166,28 +205,98 @@ export default function AdminDashboard() {
       .sort((a, b) => b.count - a.count)
       .slice(0, 3);
 
-    return { totalRevenue, orderCount, bestSellers, topClients, topLivreurs };
+    // Revenue over time & Orders per day
+    const timeMap: Record<string, { revenue: number, count: number }> = {};
+    filteredOrders.forEach(o => {
+      const date = format(new Date(o.created_at), "dd/MM");
+      if (!timeMap[date]) {
+        timeMap[date] = { revenue: 0, count: 0 };
+      }
+      timeMap[date].revenue += o.total;
+      timeMap[date].count += 1;
+    });
+
+    const revenueOverTime = Object.entries(timeMap)
+      .map(([date, data]) => ({ date, revenue: data.revenue }))
+      .sort((a, b) => {
+        const [dayA, monthA] = a.date.split('/').map(Number);
+        const [dayB, monthB] = b.date.split('/').map(Number);
+        if (monthA !== monthB) return monthA - monthB;
+        return dayA - dayB;
+      });
+
+    const ordersPerDay = Object.entries(timeMap)
+      .map(([date, data]) => ({ date, count: data.count }))
+      .sort((a, b) => {
+        const [dayA, monthA] = a.date.split('/').map(Number);
+        const [dayB, monthB] = b.date.split('/').map(Number);
+        if (monthA !== monthB) return monthA - monthB;
+        return dayA - dayB;
+      });
+
+    // Status Distribution
+    const statusMap: Record<string, number> = {
+      'En attente': 0,
+      'Accepté': 0,
+      'En livraison': 0,
+      'Livré': 0,
+      'Annulé': 0
+    };
+    const statusLabels: Record<Order['status'], string> = {
+      'pending': 'En attente',
+      'accepted': 'Accepté',
+      'en_livraison': 'En livraison',
+      'delivered': 'Livré',
+      'cancelled': 'Annulé'
+    };
+    filteredOrders.forEach(o => {
+      const label = statusLabels[o.status];
+      statusMap[label] = (statusMap[label] || 0) + 1;
+    });
+
+    const statusDistribution = Object.entries(statusMap).map(([name, value]) => ({ name, value }));
+
+    return { 
+      totalRevenue, 
+      orderCount, 
+      totalClients, 
+      totalLivreurs, 
+      bestSellers, 
+      topClients, 
+      topLivreurs,
+      revenueOverTime,
+      ordersPerDay,
+      statusDistribution
+    };
   };
+
+  useEffect(() => {
+    if (orders.length > 0) {
+      setAnalytics(calculateAnalytics(orders, clients, livreurs, analyticsFilter));
+    }
+  }, [orders, clients, livreurs, analyticsFilter]);
 
   const fetchData = async () => {
     try {
-      const [ordersRes, livreursRes, clientsRes, productsRes] = await Promise.all([
+      const [ordersRes, livreursRes, clientsRes, productsRes, categoriesRes] = await Promise.all([
         supabase.from('orders').select('*, order_items(*)').order('created_at', { ascending: false }),
         supabase.from('livreurs').select('*').order('created_at', { ascending: false }),
         supabase.from('clients').select('*').order('created_at', { ascending: false }),
-        supabase.from('products').select('*').order('created_at', { ascending: false })
+        supabase.from('products').select('*').order('created_at', { ascending: false }),
+        supabase.from('categories').select('*').order('created_at', { ascending: false })
       ]);
 
       if (ordersRes.error) throw ordersRes.error;
       if (livreursRes.error) throw livreursRes.error;
       if (clientsRes.error) throw clientsRes.error;
       if (productsRes.error) throw productsRes.error;
+      if (categoriesRes.error) throw categoriesRes.error;
 
       setOrders((ordersRes.data as OrderWithItems[]) || []);
       setLivreurs((livreursRes.data as Livreur[]) || []);
       setClients((clientsRes.data as Client[]) || []);
       setProducts((productsRes.data as MenuItem[]) || []);
-      setAnalytics(calculateAnalytics((ordersRes.data as OrderWithItems[]) || []));
+      setCategories((categoriesRes.data as Category[]) || []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -345,7 +454,7 @@ export default function AdminDashboard() {
       }
       setIsProductModalOpen(false);
       setEditingProduct(null);
-      setProductForm({ name: "", description: "", price: 0, category: CATEGORIES[0], image_url: "", is_active: true });
+      setProductForm({ name: "", description: "", price: 0, category: categories[0]?.name || "", image_url: "", is_active: true });
       fetchData();
     } catch (err) {
       console.error(err);
@@ -370,6 +479,57 @@ export default function AdminDashboard() {
       setProductToDeleteId(null);
       fetchData();
       alert("Produit supprimé avec succès");
+    } catch (err) {
+      console.error(err);
+      alert("Erreur lors de la suppression");
+    }
+  };
+
+  const handleSaveCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!categoryForm.name.trim()) return alert("Le nom est requis");
+    if (!categoryForm.value.trim()) return alert("La valeur est requise");
+
+    try {
+      if (editingCategory) {
+        const { error } = await supabase
+          .from('categories')
+          .update(categoryForm)
+          .eq('id', editingCategory.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('categories')
+          .insert([categoryForm]);
+        if (error) throw error;
+      }
+      setIsCategoryModalOpen(false);
+      setEditingCategory(null);
+      setCategoryForm({ name: "", value: "", is_active: true });
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      alert("Erreur lors de l'enregistrement de la catégorie");
+    }
+  };
+
+  const handleDeleteCategory = (id: string) => {
+    setCategoryToDeleteId(id);
+    setIsCategoryDeleteModalOpen(true);
+  };
+
+  const confirmDeleteCategory = async () => {
+    if (!categoryToDeleteId) return;
+    try {
+      const { error } = await supabase
+        .from('categories')
+        .delete()
+        .eq('id', categoryToDeleteId);
+      if (error) throw error;
+      setIsCategoryDeleteModalOpen(false);
+      setCategoryToDeleteId(null);
+      fetchData();
+      alert("Catégorie supprimée avec succès");
     } catch (err) {
       console.error(err);
       alert("Erreur lors de la suppression");
@@ -431,7 +591,6 @@ export default function AdminDashboard() {
     { id: 'products', label: 'Produits', icon: <Package size={20} /> },
     { id: 'categories', label: 'Catégories', icon: <Layers size={20} /> },
     { id: 'analytics', label: 'Analyses', icon: <BarChart3 size={20} /> },
-    { id: 'settings', label: 'Paramètres', icon: <Settings size={20} /> },
   ];
 
   return (
@@ -556,7 +715,6 @@ export default function AdminDashboard() {
               {activeTab === 'products' && "GESTION PRODUITS"}
               {activeTab === 'categories' && "GESTION CATÉGORIES"}
               {activeTab === 'analytics' && "ANALYSES & RAPPORTS"}
-              {activeTab === 'settings' && "PARAMÈTRES"}
             </h1>
             <p className="text-gray-500 font-medium">
               {activeTab === 'dashboard' && "Bienvenue, voici l'état de votre restaurant aujourd'hui."}
@@ -566,7 +724,6 @@ export default function AdminDashboard() {
               {activeTab === 'products' && "Gérez votre catalogue de produits."}
               {activeTab === 'categories' && "Organisez vos produits par catégories."}
               {activeTab === 'analytics' && "Visualisez vos performances commerciales."}
-              {activeTab === 'settings' && "Configurez les paramètres de votre application."}
             </p>
           </div>
 
@@ -600,7 +757,6 @@ export default function AdminDashboard() {
             {activeTab === 'products' && "PRODUITS"}
             {activeTab === 'categories' && "CATÉGORIES"}
             {activeTab === 'analytics' && "ANALYSES"}
-            {activeTab === 'settings' && "PARAMÈTRES"}
           </h1>
           {activeTab === 'dashboard' && (
             <button 
@@ -965,7 +1121,7 @@ export default function AdminDashboard() {
                   <button 
                     onClick={() => {
                       setEditingProduct(null);
-                      setProductForm({ name: "", description: "", price: 0, category: CATEGORIES[0], image_url: "", is_active: true });
+                      setProductForm({ name: "", description: "", price: 0, category: categories[0]?.name || "", image_url: "", is_active: true });
                       setIsProductModalOpen(true);
                     }}
                     className="w-full md:w-auto flex items-center justify-center gap-2 bg-[#FFD000] text-black px-6 py-4 rounded-2xl font-black text-sm hover:scale-105 transition-transform shadow-lg shadow-[#FFD000]/20"
@@ -1038,19 +1194,262 @@ export default function AdminDashboard() {
               </div>
             )}
 
-            {/* Placeholder sections for new tabs */}
-            {(activeTab === 'categories' || activeTab === 'settings' || activeTab === 'analytics') && (
-              <div className="py-24 text-center border-2 border-dashed border-white/5 rounded-[40px]">
-                <div className="w-20 h-20 bg-white/5 rounded-3xl flex items-center justify-center mx-auto mb-6 text-gray-500">
-                  {activeTab === 'products' && <Package size={40} />}
-                  {activeTab === 'categories' && <Layers size={40} />}
-                  {activeTab === 'settings' && <Settings size={40} />}
-                  {activeTab === 'analytics' && <BarChart3 size={40} />}
+            {activeTab === 'categories' && (
+              <div className="space-y-6">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <h2 className="text-2xl font-black tracking-tighter uppercase italic">Gestion des Catégories</h2>
+                  <button 
+                    onClick={() => {
+                      setEditingCategory(null);
+                      setCategoryForm({ name: "", value: "", is_active: true });
+                      setIsCategoryModalOpen(true);
+                    }}
+                    className="w-full md:w-auto flex items-center justify-center gap-2 bg-[#FFD000] text-black px-6 py-4 rounded-2xl font-black text-sm hover:scale-105 transition-transform shadow-lg shadow-[#FFD000]/20"
+                  >
+                    <Plus size={18} /> AJOUTER UNE CATÉGORIE
+                  </button>
                 </div>
-                <h3 className="text-2xl font-black tracking-tighter mb-2 uppercase italic">Section en développement</h3>
-                <p className="text-gray-500 font-bold max-w-sm mx-auto">
-                  Cette section est en cours de déploiement. Revenez bientôt pour gérer vos {activeTab === 'categories' ? 'catégories' : activeTab === 'settings' ? 'paramètres' : 'analyses'}.
-                </p>
+
+                <div className="bg-white/5 border border-white/10 rounded-[40px] overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-white/5">
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">Nom</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">Valeur / Slug</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">Statut</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {categories.map(category => (
+                          <tr key={category.id} className="hover:bg-white/5 transition-colors">
+                            <td className="px-6 py-4">
+                              <div className="font-black text-white">{category.name}</div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="font-mono text-xs text-gray-500">{category.value}</div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={cn(
+                                "text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest",
+                                category.is_active ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
+                              )}>
+                                {category.is_active ? "Actif" : "Inactif"}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                <button 
+                                  onClick={() => {
+                                    setEditingCategory(category);
+                                    setCategoryForm({ 
+                                      name: category.name, 
+                                      value: category.value, 
+                                      is_active: category.is_active 
+                                    });
+                                    setIsCategoryModalOpen(true);
+                                  }}
+                                  className="p-2 bg-white/5 hover:bg-blue-500/20 hover:text-blue-500 rounded-xl transition-all"
+                                >
+                                  <Edit size={16} />
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteCategory(category.id)}
+                                  className="p-2 bg-white/5 hover:bg-red-500/20 hover:text-red-500 rounded-xl transition-all"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'analytics' && (
+              <div className="space-y-8">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div>
+                    <h2 className="text-3xl font-black tracking-tighter uppercase italic">Analyses & Statistiques</h2>
+                    <p className="text-gray-500 font-bold">Suivez les performances de votre restaurant en temps réel.</p>
+                  </div>
+                  <div className="flex bg-white/5 p-1 rounded-2xl border border-white/10">
+                    {(['today', '7days', '30days'] as const).map((filter) => (
+                      <button
+                        key={filter}
+                        onClick={() => setAnalyticsFilter(filter)}
+                        className={cn(
+                          "px-6 py-2 rounded-xl font-black text-xs uppercase transition-all",
+                          analyticsFilter === filter 
+                            ? "bg-[#FFD000] text-black shadow-lg shadow-[#FFD000]/20" 
+                            : "text-gray-500 hover:text-white"
+                        )}
+                      >
+                        {filter === 'today' ? "Aujourd'hui" : filter === '7days' ? "7 Jours" : "30 Jours"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Key Metrics */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  {[
+                    { label: "Revenu Total", value: `${analytics?.totalRevenue || 0} DH`, icon: <TrendingUp className="text-[#FFD000]" />, color: "bg-[#FFD000]/10" },
+                    { label: "Commandes", value: analytics?.orderCount || 0, icon: <ShoppingBag className="text-blue-500" />, color: "bg-blue-500/10" },
+                    { label: "Clients", value: analytics?.totalClients || 0, icon: <Users className="text-purple-500" />, color: "bg-purple-500/10" },
+                    { label: "Livreurs", value: analytics?.totalLivreurs || 0, icon: <Truck className="text-green-500" />, color: "bg-green-500/10" },
+                  ].map((stat, i) => (
+                    <div key={i} className="bg-white/5 border border-white/10 p-8 rounded-[40px] relative overflow-hidden group">
+                      <div className={cn("absolute top-0 right-0 w-32 h-32 -mr-8 -mt-8 rounded-full blur-3xl opacity-20 transition-opacity group-hover:opacity-30", stat.color)} />
+                      <div className="relative flex items-center justify-between mb-4">
+                        <div className={cn("p-3 rounded-2xl", stat.color)}>
+                          {stat.icon}
+                        </div>
+                      </div>
+                      <div className="relative">
+                        <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">{stat.label}</div>
+                        <div className="text-3xl font-black tracking-tighter">{stat.value}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Charts */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  {/* Revenue Chart */}
+                  <div className="bg-white/5 border border-white/10 p-8 rounded-[40px]">
+                    <h3 className="text-xl font-black tracking-tighter mb-8 uppercase italic">Évolution du Revenu</h3>
+                    <div className="h-[300px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={analytics?.revenueOverTime || []}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
+                          <XAxis dataKey="date" stroke="#666" fontSize={10} fontWeight="bold" axisLine={false} tickLine={false} />
+                          <YAxis stroke="#666" fontSize={10} fontWeight="bold" axisLine={false} tickLine={false} tickFormatter={(v) => `${v}DH`} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#111', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', fontWeight: 'bold' }}
+                            itemStyle={{ color: '#FFD000' }}
+                          />
+                          <Line type="monotone" dataKey="revenue" stroke="#FFD000" strokeWidth={4} dot={{ r: 4, fill: '#FFD000', strokeWidth: 2, stroke: '#000' }} activeDot={{ r: 6, strokeWidth: 0 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Orders Chart */}
+                  <div className="bg-white/5 border border-white/10 p-8 rounded-[40px]">
+                    <h3 className="text-xl font-black tracking-tighter mb-8 uppercase italic">Commandes par Jour</h3>
+                    <div className="h-[300px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={analytics?.ordersPerDay || []}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
+                          <XAxis dataKey="date" stroke="#666" fontSize={10} fontWeight="bold" axisLine={false} tickLine={false} />
+                          <YAxis stroke="#666" fontSize={10} fontWeight="bold" axisLine={false} tickLine={false} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#111', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', fontWeight: 'bold' }}
+                            cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                          />
+                          <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Status Distribution */}
+                  <div className="bg-white/5 border border-white/10 p-8 rounded-[40px]">
+                    <h3 className="text-xl font-black tracking-tighter mb-8 uppercase italic">Répartition des Statuts</h3>
+                    <div className="h-[300px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={analytics?.statusDistribution || []}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={60}
+                            outerRadius={80}
+                            paddingAngle={5}
+                            dataKey="value"
+                          >
+                            {[
+                              '#FFD000', // En attente
+                              '#3b82f6', // Accepté
+                              '#f59e0b', // En livraison
+                              '#10b981', // Livré
+                              '#ef4444'  // Annulé
+                            ].map((color, index) => (
+                              <Cell key={`cell-${index}`} fill={color} />
+                            ))}
+                          </Pie>
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#111', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', fontWeight: 'bold' }}
+                          />
+                          <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Top Data */}
+                  <div className="bg-white/5 border border-white/10 p-8 rounded-[40px]">
+                    <h3 className="text-xl font-black tracking-tighter mb-8 uppercase italic">Top Performances</h3>
+                    <div className="space-y-6">
+                      {/* Top Products */}
+                      <div>
+                        <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Meilleurs Produits</div>
+                        <div className="space-y-3">
+                          {analytics?.bestSellers.map((p, i) => (
+                            <div key={i} className="flex items-center justify-between p-4 bg-black/40 rounded-2xl border border-white/5">
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 bg-[#FFD000] text-black rounded-lg flex items-center justify-center font-black text-xs">#{i+1}</div>
+                                <span className="font-bold text-sm">{p.name}</span>
+                              </div>
+                              <span className="text-[#FFD000] font-black text-xs">{p.count} ventes</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Top Clients */}
+                      <div>
+                        <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Meilleurs Clients</div>
+                        <div className="space-y-3">
+                          {analytics?.topClients.map((c, i) => (
+                            <div key={i} className="flex items-center justify-between p-4 bg-black/40 rounded-2xl border border-white/5">
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 bg-purple-500 text-white rounded-lg flex items-center justify-center font-black text-xs">#{i+1}</div>
+                                <div className="flex flex-col">
+                                  <span className="font-bold text-sm">{c.name}</span>
+                                  <span className="text-[10px] text-gray-500 font-bold">{c.phone}</span>
+                                </div>
+                              </div>
+                              <span className="text-purple-500 font-black text-xs">{c.total} DH</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Top Livreurs */}
+                      <div>
+                        <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Meilleurs Livreurs</div>
+                        <div className="space-y-3">
+                          {analytics?.topLivreurs.map((l, i) => (
+                            <div key={i} className="flex items-center justify-between p-4 bg-black/40 rounded-2xl border border-white/5">
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 bg-green-500 text-white rounded-lg flex items-center justify-center font-black text-xs">#{i+1}</div>
+                                <span className="font-bold text-sm">{l.name}</span>
+                              </div>
+                              <span className="text-green-500 font-black text-xs">{l.count} livraisons</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </motion.div>
@@ -1200,8 +1599,9 @@ export default function AdminDashboard() {
                           onChange={e => setProductForm({...productForm, category: e.target.value})}
                           className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold appearance-none"
                         >
-                          {CATEGORIES.map(cat => (
-                            <option key={cat} value={cat}>{cat}</option>
+                          <option value="" disabled>Sélectionner une catégorie</option>
+                          {categories.filter(c => c.is_active).map(cat => (
+                            <option key={cat.id} value={cat.name}>{cat.name}</option>
                           ))}
                         </select>
                       </div>
@@ -1300,6 +1700,135 @@ export default function AdminDashboard() {
                   </button>
                   <button 
                     onClick={confirmDeleteProduct}
+                    className="flex-1 bg-red-500 text-white py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-red-500/20"
+                  >
+                    SUPPRIMER
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+        {/* Category Modal */}
+        <AnimatePresence>
+          {isCategoryModalOpen && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsCategoryModalOpen(false)}
+                className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+              />
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="relative w-full max-w-md bg-[#111] border border-white/10 rounded-[40px] p-8 shadow-2xl"
+              >
+                <h2 className="text-3xl font-black tracking-tighter mb-8 uppercase italic">
+                  {editingCategory ? "MODIFIER CATÉGORIE" : "NOUVELLE CATÉGORIE"}
+                </h2>
+                
+                <form onSubmit={handleSaveCategory} className="space-y-6">
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">NOM DE LA CATÉGORIE</label>
+                      <input 
+                        required
+                        type="text" 
+                        value={categoryForm.name}
+                        onChange={e => {
+                          const name = e.target.value;
+                          const value = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+                          setCategoryForm({...categoryForm, name, value: editingCategory ? categoryForm.value : value});
+                        }}
+                        className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
+                        placeholder="Ex: Boissons"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">VALEUR / SLUG (URL)</label>
+                      <input 
+                        required
+                        type="text" 
+                        value={categoryForm.value}
+                        onChange={e => setCategoryForm({...categoryForm, value: e.target.value})}
+                        className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold font-mono"
+                        placeholder="Ex: boissons"
+                      />
+                    </div>
+                    <div className="flex items-center gap-4 ml-4">
+                      <input 
+                        type="checkbox" 
+                        id="cat_is_active"
+                        checked={categoryForm.is_active}
+                        onChange={e => setCategoryForm({...categoryForm, is_active: e.target.checked})}
+                        className="w-5 h-5 accent-[#FFD000]"
+                      />
+                      <label htmlFor="cat_is_active" className="text-sm font-bold text-gray-400 cursor-pointer">Catégorie active</label>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-4 pt-4">
+                    <button 
+                      type="button"
+                      onClick={() => setIsCategoryModalOpen(false)}
+                      className="flex-1 bg-white/5 text-white py-4 rounded-2xl font-black text-sm hover:bg-white/10 transition-colors"
+                    >
+                      ANNULER
+                    </button>
+                    <button 
+                      type="submit"
+                      className="flex-1 bg-[#FFD000] text-black py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-[#FFD000]/20"
+                    >
+                      ENREGISTRER
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Category Delete Confirmation Modal */}
+        <AnimatePresence>
+          {isCategoryDeleteModalOpen && (
+            <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsCategoryDeleteModalOpen(false)}
+                className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+              />
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="relative w-full max-w-md bg-[#111] border border-white/10 rounded-[40px] p-8 shadow-2xl text-center"
+              >
+                <div className="w-20 h-20 bg-red-500/10 rounded-[32px] flex items-center justify-center text-red-500 mx-auto mb-6">
+                  <Trash2 size={40} />
+                </div>
+                
+                <h2 className="text-2xl font-black tracking-tighter mb-2 uppercase italic">
+                  Confirmation
+                </h2>
+                <p className="text-gray-400 font-bold mb-8">
+                  Êtes-vous sûr de vouloir supprimer cette catégorie ?<br />
+                  <span className="text-red-500/80 text-sm">Cette action est irréversible.</span>
+                </p>
+                
+                <div className="flex gap-4">
+                  <button 
+                    onClick={() => setIsCategoryDeleteModalOpen(false)}
+                    className="flex-1 bg-white/5 text-white py-4 rounded-2xl font-black text-sm hover:bg-white/10 transition-colors"
+                  >
+                    ANNULER
+                  </button>
+                  <button 
+                    onClick={confirmDeleteCategory}
                     className="flex-1 bg-red-500 text-white py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-red-500/20"
                   >
                     SUPPRIMER
