@@ -60,6 +60,7 @@ export interface Order {
   accepted_at?: string;
   picked_up_at?: string;
   delivered_at?: string;
+  livreurs?: { full_name: string };
 }
 
 export interface OrderItem {
@@ -81,19 +82,6 @@ export interface Category {
   value: string;
   is_active: boolean;
   created_at: string;
-}
-
-export interface Analytics {
-  totalRevenue: number;
-  orderCount: number;
-  totalClients: number;
-  totalLivreurs: number;
-  bestSellers: { name: string; count: number }[];
-  topClients: { name: string; phone: string; total: number }[];
-  topLivreurs: { name: string; count: number }[];
-  revenueOverTime: { date: string; revenue: number }[];
-  ordersPerDay: { date: string; count: number }[];
-  statusDistribution: { name: string; value: number }[];
 }
 
 export interface Settings {

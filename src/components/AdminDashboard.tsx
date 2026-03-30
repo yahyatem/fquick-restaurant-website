@@ -1,2062 +1,858 @@
-import React, { useState, useEffect } from "react";
-import { useNavigate, Link } from "react-router-dom";
-import { 
-  LayoutDashboard, 
-  ShoppingBag, 
-  TrendingUp, 
-  Users, 
-  Download, 
-  Bell, 
-  LogOut,
-  Calendar,
-  Search,
-  CheckCircle2,
-  Clock,
-  FileText,
-  ExternalLink,
-  User as UserIcon,
-  Truck,
-  UserCheck,
-  Plus,
-  Edit,
-  Trash2,
-  Filter,
-  ChevronRight,
-  Menu as MenuIcon,
-  X,
-  Package,
-  Layers,
-  BarChart3
-} from "lucide-react";
-import { format } from "date-fns";
-import { fr } from "date-fns/locale";
-import { Order, Analytics, OrderItem, Livreur, Client, MenuItem, Category, ProductSize } from "../types";
+import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { cn } from "../lib/utils";
-import { supabase } from "../lib/supabase";
-import { jsPDF } from "jspdf";
-import autoTable from "jspdf-autotable";
 import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  BarChart, Bar, PieChart, Pie, Cell, Legend 
-} from 'recharts';
+  BarChart3, 
+  Package, 
+  Users, 
+  Settings, 
+  Plus, 
+  Trash2, 
+  Edit2, 
+  CheckCircle2, 
+  XCircle, 
+  TrendingUp, 
+  DollarSign, 
+  ShoppingBag, 
+  ChevronRight, 
+  Loader2, 
+  Search, 
+  Filter, 
+  Download, 
+  Eye, 
+  LogOut,
+  LayoutGrid,
+  Truck,
+  MoreVertical,
+  AlertCircle,
+  Phone,
+  Clock,
+  MapPin
+} from "lucide-react";
+import { supabase } from "../lib/supabase";
+import { Order, MenuItem, Category, Livreur, OrderItem } from "../types";
+import { format, startOfDay, subDays, isWithinInterval, endOfDay } from "date-fns";
+import { fr } from "date-fns/locale";
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer, 
+  AreaChart, 
+  Area,
+  PieChart,
+  Pie,
+  Cell
+} from "recharts";
+import { toast } from "sonner";
+import { cn } from "../lib/utils";
 
-interface OrderWithItems extends Order {
-  order_items: OrderItem[];
-}
-
-type AdminTab = 'dashboard' | 'orders' | 'livreurs' | 'clients' | 'products' | 'categories' | 'analytics';
+const COLORS = ['#FFD000', '#FF8A00', '#FF4D00', '#FF0000', '#8B0000'];
 
 export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [orders, setOrders] = useState<OrderWithItems[]>([]);
-  const [livreurs, setLivreurs] = useState<Livreur[]>([]);
-  const [clients, setClients] = useState<Client[]>([]);
+  const [activeTab, setActiveTab] = useState<'orders' | 'products' | 'categories' | 'livreurs' | 'analytics'>('orders');
+  const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [analytics, setAnalytics] = useState<Analytics | null>(null);
-  const [notifications, setNotifications] = useState<OrderWithItems[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  
-  // Livreur Modal State
-  const [isLivreurModalOpen, setIsLivreurModalOpen] = useState(false);
-  const [editingLivreur, setEditingLivreur] = useState<Livreur | null>(null);
-  const [livreurForm, setLivreurForm] = useState({
-    full_name: "",
-    phone: "",
-    password: "",
-    status: "available" as const
-  });
-
-  // Product Modal State
-  const [isProductModalOpen, setIsProductModalOpen] = useState(false);
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-  const [productToDeleteId, setProductToDeleteId] = useState<string | null>(null);
-  const [editingProduct, setEditingProduct] = useState<MenuItem | null>(null);
-  const [productForm, setProductForm] = useState({
-    name: "",
-    description: "",
-    category_id: "",
-    image_url: "",
-    is_active: true,
-    sizes: [] as Partial<ProductSize>[]
-  });
-
-  // Category Modal State
-  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
-  const [isCategoryDeleteModalOpen, setIsCategoryDeleteModalOpen] = useState(false);
-  const [categoryToDeleteId, setCategoryToDeleteId] = useState<string | null>(null);
-  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
-  const [categoryForm, setCategoryForm] = useState({
-    name: "",
-    value: "",
-    is_active: true
-  });
-
-  const [orderFilter, setOrderFilter] = useState<Order['status'] | 'all'>('all');
-  const [livreurFilter, setLivreurFilter] = useState<string>('all');
-  const [analyticsFilter, setAnalyticsFilter] = useState<'today' | '7days' | '30days'>('30days');
-
-  const navigate = useNavigate();
+  const [livreurs, setLivreurs] = useState<Livreur[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalType, setModalType] = useState<'product' | 'category' | 'livreur' | 'order_details'>('product');
+  const [selectedItem, setSelectedItem] = useState<any>(null);
+  const [isActionLoading, setIsActionLoading] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem("admin_token");
-    if (!token) {
-      navigate("/admin/login");
-      return;
-    }
-
     fetchData();
-
-    // Supabase real-time subscription
+    
+    // Real-time orders subscription
     const subscription = supabase
-      .channel('admin_orders')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, async (payload) => {
-        const newOrder = payload.new as Order;
-        
-        // Fetch items for the new order
-        const { data: items } = await supabase
-          .from('order_items')
-          .select('*')
-          .eq('order_id', newOrder.id);
-        
-        const orderWithItems = { ...newOrder, order_items: items || [] } as OrderWithItems;
-        
-        setOrders(prev => {
-          const updatedOrders = [orderWithItems, ...prev];
-          return updatedOrders;
-        });
-        setNotifications(prev => [orderWithItems, ...prev]);
-        
-        // Play notification sound
-        const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
-        audio.play().catch(() => {});
+      .channel('admin-orders')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        fetchData();
       })
       .subscribe();
 
     return () => {
       subscription.unsubscribe();
     };
-  }, [navigate]);
-
-  const calculateAnalytics = (
-    orders: OrderWithItems[], 
-    clients: Client[], 
-    livreurs: Livreur[], 
-    filter: 'today' | '7days' | '30days'
-  ): Analytics => {
-    const now = new Date();
-    const filteredOrders = orders.filter(o => {
-      const orderDate = new Date(o.created_at);
-      if (filter === 'today') {
-        return orderDate.toDateString() === now.toDateString();
-      } else if (filter === '7days') {
-        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        return orderDate >= sevenDaysAgo;
-      } else if (filter === '30days') {
-        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        return orderDate >= thirtyDaysAgo;
-      }
-      return true;
-    });
-
-    const totalRevenue = filteredOrders.reduce((sum, o) => sum + o.total, 0);
-    const orderCount = filteredOrders.length;
-    const totalClients = clients.length;
-    const totalLivreurs = livreurs.length;
-
-    // Top Products
-    const productMap: Record<string, number> = {};
-    filteredOrders.forEach(o => {
-      o.order_items?.forEach(i => {
-        productMap[i.product_name] = (productMap[i.product_name] || 0) + i.quantity;
-      });
-    });
-    const bestSellers = Object.entries(productMap)
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 3);
-
-    // Top Clients
-    const clientMap: Record<string, { name: string, total: number }> = {};
-    filteredOrders.forEach(o => {
-      if (!clientMap[o.customer_phone]) {
-        clientMap[o.customer_phone] = { name: o.customer_name, total: 0 };
-      }
-      clientMap[o.customer_phone].total += o.total;
-    });
-    const topClients = Object.entries(clientMap)
-      .map(([phone, data]) => ({ phone, ...data }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 3);
-
-    // Top Delivery Person
-    const livreurMap: Record<string, number> = {};
-    filteredOrders.forEach(o => {
-      if (o.livreur_id) {
-        const livreur = livreurs.find(l => l.id === o.livreur_id);
-        const name = livreur ? livreur.full_name : "Inconnu";
-        livreurMap[name] = (livreurMap[name] || 0) + 1;
-      }
-    });
-    const topLivreurs = Object.entries(livreurMap)
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 3);
-
-    // Revenue over time & Orders per day
-    const timeMap: Record<string, { revenue: number, count: number }> = {};
-    filteredOrders.forEach(o => {
-      const date = format(new Date(o.created_at), "dd/MM");
-      if (!timeMap[date]) {
-        timeMap[date] = { revenue: 0, count: 0 };
-      }
-      timeMap[date].revenue += o.total;
-      timeMap[date].count += 1;
-    });
-
-    const revenueOverTime = Object.entries(timeMap)
-      .map(([date, data]) => ({ date, revenue: data.revenue }))
-      .sort((a, b) => {
-        const [dayA, monthA] = a.date.split('/').map(Number);
-        const [dayB, monthB] = b.date.split('/').map(Number);
-        if (monthA !== monthB) return monthA - monthB;
-        return dayA - dayB;
-      });
-
-    const ordersPerDay = Object.entries(timeMap)
-      .map(([date, data]) => ({ date, count: data.count }))
-      .sort((a, b) => {
-        const [dayA, monthA] = a.date.split('/').map(Number);
-        const [dayB, monthB] = b.date.split('/').map(Number);
-        if (monthA !== monthB) return monthA - monthB;
-        return dayA - dayB;
-      });
-
-    // Status Distribution
-    const statusMap: Record<string, number> = {
-      'En attente': 0,
-      'Accepté': 0,
-      'En livraison': 0,
-      'Livré': 0,
-      'Annulé': 0
-    };
-    const statusLabels: Record<Order['status'], string> = {
-      'pending': 'En attente',
-      'accepted': 'Accepté',
-      'en_livraison': 'En livraison',
-      'delivered': 'Livré',
-      'cancelled': 'Annulé'
-    };
-    filteredOrders.forEach(o => {
-      const label = statusLabels[o.status];
-      statusMap[label] = (statusMap[label] || 0) + 1;
-    });
-
-    const statusDistribution = Object.entries(statusMap).map(([name, value]) => ({ name, value }));
-
-    return { 
-      totalRevenue, 
-      orderCount, 
-      totalClients, 
-      totalLivreurs, 
-      bestSellers, 
-      topClients, 
-      topLivreurs,
-      revenueOverTime,
-      ordersPerDay,
-      statusDistribution
-    };
-  };
-
-  useEffect(() => {
-    if (orders.length > 0) {
-      setAnalytics(calculateAnalytics(orders, clients, livreurs, analyticsFilter));
-    }
-  }, [orders, clients, livreurs, analyticsFilter]);
+  }, []);
 
   const fetchData = async () => {
     try {
-      const [ordersRes, livreursRes, clientsRes, productsRes, categoriesRes] = await Promise.all([
-        supabase.from('orders').select('*, order_items(*)').order('created_at', { ascending: false }),
-        supabase.from('livreurs').select('*').order('created_at', { ascending: false }),
-        supabase.from('clients').select('*').order('created_at', { ascending: false }),
-        supabase.from('products').select('*, sizes:product_sizes(*)').order('created_at', { ascending: false }),
-        supabase.from('categories').select('*').order('created_at', { ascending: false })
+      const [ordersRes, productsRes, categoriesRes, livreursRes] = await Promise.all([
+        supabase.from('orders').select('*, livreurs(full_name)').order('created_at', { ascending: false }),
+        supabase.from('products').select('*').order('name'),
+        supabase.from('categories').select('*').order('order_index'),
+        supabase.from('livreurs').select('*').order('full_name')
       ]);
 
-      if (ordersRes.error) throw ordersRes.error;
-      if (livreursRes.error) throw livreursRes.error;
-      if (clientsRes.error) throw clientsRes.error;
-      if (productsRes.error) throw productsRes.error;
-      if (categoriesRes.error) throw categoriesRes.error;
-
-      setOrders((ordersRes.data as OrderWithItems[]) || []);
-      setLivreurs((livreursRes.data as Livreur[]) || []);
-      setClients((clientsRes.data as Client[]) || []);
-      setProducts((productsRes.data as MenuItem[]) || []);
-      setCategories((categoriesRes.data as Category[]) || []);
-    } catch (err) {
-      console.error(err);
+      if (ordersRes.data) setOrders(ordersRes.data);
+      if (productsRes.data) setProducts(productsRes.data);
+      if (categoriesRes.data) setCategories(categoriesRes.data);
+      if (livreursRes.data) setLivreurs(livreursRes.data);
+    } catch (error) {
+      console.error("Error fetching admin data:", error);
+      toast.error("Erreur lors du chargement des données");
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
-  const exportToPDF = () => {
-    const doc = new jsPDF();
-    const dateStr = format(new Date(), "dd/MM/yyyy HH:mm");
-    const brandColor: [number, number, number] = [255, 208, 0]; // #FFD000
-    const darkColor: [number, number, number] = [17, 17, 17]; // #111111
-
-    // Header Background
-    doc.setFillColor(darkColor[0], darkColor[1], darkColor[2]);
-    doc.rect(0, 0, 210, 45, 'F');
-
-    // Title
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(28);
-    doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
-    doc.text("F-QUICK", 14, 25);
-    
-    // Subtitle
-    doc.setFontSize(14);
-    doc.setTextColor(255, 255, 255);
-    doc.text("Rapport des Commandes", 14, 35);
-
-    // Date
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.setTextColor(150, 150, 150);
-    doc.text(`Généré le: ${dateStr}`, 196, 35, { align: "right" });
-
-    // Summary Section
-    // Total Orders Card
-    doc.setFillColor(245, 245, 245);
-    doc.roundedRect(14, 55, 85, 25, 3, 3, 'F');
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
-    doc.setTextColor(100, 100, 100);
-    doc.text("TOTAL COMMANDES", 20, 63);
-    doc.setFontSize(18);
-    doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
-    doc.text(`${analytics?.orderCount || 0}`, 20, 74);
-
-    // Total Revenue Card
-    doc.setFillColor(245, 245, 245);
-    doc.roundedRect(111, 55, 85, 25, 3, 3, 'F');
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
-    doc.setTextColor(100, 100, 100);
-    doc.text("REVENU TOTAL", 117, 63);
-    doc.setFontSize(18);
-    doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
-    doc.text(`${analytics?.totalRevenue || 0} MAD`, 117, 74);
-
-    // Table
-    const tableData = orders.map(o => [
-      format(new Date(o.created_at), "dd/MM HH:mm"),
-      o.customer_name || o.customer_phone,
-      o.order_items.map(i => `${i.product_name} x${i.quantity}`).join(", "),
-      `${o.total} MAD`
-    ]);
-
-    autoTable(doc, {
-      startY: 95,
-      head: [["Date", "Client", "Articles", "Total"]],
-      body: tableData,
-      headStyles: { 
-        fillColor: darkColor, 
-        textColor: brandColor,
-        fontSize: 10,
-        fontStyle: 'bold',
-        halign: 'left'
-      },
-      bodyStyles: {
-        fontSize: 9,
-        textColor: [50, 50, 50],
-        cellPadding: 5
-      },
-      columnStyles: {
-        3: { halign: 'right', fontStyle: 'bold' }
-      },
-      alternateRowStyles: { fillColor: [252, 252, 252] },
-      margin: { left: 14, right: 14 },
-      theme: 'striped',
-      styles: {
-        overflow: 'linebreak',
-        cellWidth: 'auto'
-      }
-    });
-
-    doc.save(`fquick_orders_${format(new Date(), "yyyy-MM-dd")}.pdf`);
-  };
-
-  const handleSaveLivreur = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      if (editingLivreur) {
-        const { error } = await supabase
-          .from('livreurs')
-          .update(livreurForm)
-          .eq('id', editingLivreur.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase
-          .from('livreurs')
-          .insert([livreurForm]);
-        if (error) throw error;
-      }
-      setIsLivreurModalOpen(false);
-      setEditingLivreur(null);
-      setLivreurForm({ full_name: "", phone: "", password: "", status: "available" });
-      fetchData();
-    } catch (err) {
-      console.error(err);
-      alert("Erreur lors de l'enregistrement du livreur");
-    }
-  };
-
-  const handleDeleteLivreur = async (id: string) => {
-    if (!confirm("Êtes-vous sûr de vouloir supprimer ce livreur ?")) return;
+  const handleStatusUpdate = async (orderId: string, newStatus: string) => {
+    setIsActionLoading(true);
     try {
       const { error } = await supabase
-        .from('livreurs')
-        .delete()
-        .eq('id', id);
+        .from('orders')
+        .update({ status: newStatus })
+        .eq('id', orderId);
+
       if (error) throw error;
+      toast.success("Statut mis à jour avec succès");
       fetchData();
-    } catch (err) {
-      console.error(err);
-      alert("Erreur lors de la suppression");
+    } catch (error) {
+      console.error("Error updating status:", error);
+      toast.error("Erreur lors de la mise à jour");
+    } finally {
+      setIsActionLoading(false);
     }
   };
 
-  const handleSaveProduct = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!productForm.name.trim()) return alert("Le nom est requis");
-    if (!productForm.category_id) return alert("La catégorie est requise");
-    if (productForm.sizes.length === 0) return alert("Au moins une taille est requise");
+  const handleLogout = () => {
+    localStorage.removeItem('admin_authenticated');
+    window.location.href = '/';
+  };
 
-    try {
-      let productId = editingProduct?.id;
-
-      const productPayload = {
-        name: productForm.name,
-        description: productForm.description,
-        category_id: productForm.category_id,
-        image_url: productForm.image_url,
-        is_active: productForm.is_active
+  const analyticsData = useMemo(() => {
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const date = subDays(new Date(), i);
+      const dayOrders = orders.filter(o => 
+        isWithinInterval(new Date(o.created_at), {
+          start: startOfDay(date),
+          end: endOfDay(date)
+        })
+      );
+      return {
+        date: format(date, 'dd MMM', { locale: fr }),
+        revenue: dayOrders.reduce((sum, o) => sum + o.total, 0),
+        orders: dayOrders.length
       };
+    }).reverse();
 
-      if (editingProduct) {
-        const { error } = await supabase
-          .from('products')
-          .update(productPayload)
-          .eq('id', editingProduct.id);
-        if (error) throw error;
-      } else {
-        const { data, error } = await supabase
-          .from('products')
-          .insert([productPayload])
-          .select()
-          .single();
-        if (error) throw error;
-        productId = data.id;
-      }
+    const categoryStats = categories.map(cat => ({
+      name: cat.name,
+      value: products.filter(p => p.category_id === cat.id).length
+    }));
 
-      // Handle sizes: Delete existing and insert new ones (simplest approach)
-      if (productId) {
-        const { error: deleteError } = await supabase
-          .from('product_sizes')
-          .delete()
-          .eq('product_id', productId);
-        if (deleteError) throw deleteError;
+    const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
+    const completedOrders = orders.filter(o => o.status === 'completed').length;
+    const averageOrderValue = orders.length > 0 ? totalRevenue / orders.length : 0;
 
-        const sizesPayload = productForm.sizes.map(s => ({
-          product_id: productId,
-          size_name: s.size_name,
-          price: s.price,
-          is_default: s.is_default
-        }));
+    return { last7Days, categoryStats, totalRevenue, completedOrders, averageOrderValue };
+  }, [orders, products, categories]);
 
-        const { error: insertError } = await supabase
-          .from('product_sizes')
-          .insert(sizesPayload);
-        if (insertError) throw insertError;
-      }
+  const filteredOrders = orders.filter(o => {
+    const matchesSearch = o.customer_name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                         o.tracking_code.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesStatus = statusFilter === "all" ? true : o.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
-      setIsProductModalOpen(false);
-      setEditingProduct(null);
-      setProductForm({ 
-        name: "", 
-        description: "", 
-        category_id: "", 
-        image_url: "", 
-        is_active: true,
-        sizes: []
-      });
-      fetchData();
-    } catch (err) {
-      console.error(err);
-      alert("Erreur lors de l'enregistrement du produit");
-    }
-  };
-
-  const handleDeleteProduct = (id: string) => {
-    setProductToDeleteId(id);
-    setIsDeleteModalOpen(true);
-  };
-
-  const confirmDeleteProduct = async () => {
-    if (!productToDeleteId) return;
-    try {
-      // Delete sizes first (if CASCADE is not set)
-      const { error: sizesError } = await supabase
-        .from('product_sizes')
-        .delete()
-        .eq('product_id', productToDeleteId);
-      if (sizesError) throw sizesError;
-
-      const { error } = await supabase
-        .from('products')
-        .delete()
-        .eq('id', productToDeleteId);
-      if (error) throw error;
-      setIsDeleteModalOpen(false);
-      setProductToDeleteId(null);
-      fetchData();
-      alert("Produit supprimé avec succès");
-    } catch (err) {
-      console.error(err);
-      alert("Erreur lors de la suppression");
-    }
-  };
-
-  const handleSaveCategory = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!categoryForm.name.trim()) return alert("Le nom est requis");
-    if (!categoryForm.value.trim()) return alert("La valeur est requise");
-
-    try {
-      if (editingCategory) {
-        const { error } = await supabase
-          .from('categories')
-          .update(categoryForm)
-          .eq('id', editingCategory.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase
-          .from('categories')
-          .insert([categoryForm]);
-        if (error) throw error;
-      }
-      setIsCategoryModalOpen(false);
-      setEditingCategory(null);
-      setCategoryForm({ name: "", value: "", is_active: true });
-      fetchData();
-    } catch (err) {
-      console.error(err);
-      alert("Erreur lors de l'enregistrement de la catégorie");
-    }
-  };
-
-  const handleDeleteCategory = (id: string) => {
-    setCategoryToDeleteId(id);
-    setIsCategoryDeleteModalOpen(true);
-  };
-
-  const confirmDeleteCategory = async () => {
-    if (!categoryToDeleteId) return;
-    try {
-      const { error } = await supabase
-        .from('categories')
-        .delete()
-        .eq('id', categoryToDeleteId);
-      if (error) throw error;
-      setIsCategoryDeleteModalOpen(false);
-      setCategoryToDeleteId(null);
-      fetchData();
-      alert("Catégorie supprimée avec succès");
-    } catch (err) {
-      console.error(err);
-      alert("Erreur lors de la suppression");
-    }
-  };
-
-  const handleLogout = (isExpired = false) => {
-    localStorage.removeItem("admin_token");
-    if (isExpired) {
-      navigate("/admin/login?expired=true");
-    } else {
-      navigate("/admin/login");
-    }
-  };
-
-  useEffect(() => {
-    const INACTIVITY_TIMEOUT = 600000; // 10 minutes
-    let timeoutId: NodeJS.Timeout;
-
-    const resetTimer = () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => {
-        handleLogout(true);
-      }, INACTIVITY_TIMEOUT);
-    };
-
-    const handleActivity = () => {
-      resetTimer();
-    };
-
-    // Initial timer
-    resetTimer();
-
-    // Events to track
-    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
-    events.forEach(event => {
-      window.addEventListener(event, handleActivity);
-    });
-
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      events.forEach(event => {
-        window.removeEventListener(event, handleActivity);
-      });
-    };
-  }, [navigate]);
-
-  if (isLoading) return (
-    <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center">
-      <div className="w-12 h-12 border-4 border-[#FFD000] border-t-transparent rounded-full animate-spin" />
-    </div>
-  );
-
-  const navLinks: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
-    { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
-    { id: 'orders', label: 'Commandes', icon: <ShoppingBag size={20} /> },
-    { id: 'livreurs', label: 'Livreurs', icon: <Truck size={20} /> },
-    { id: 'clients', label: 'Clients', icon: <Users size={20} /> },
-    { id: 'products', label: 'Produits', icon: <Package size={20} /> },
-    { id: 'categories', label: 'Catégories', icon: <Layers size={20} /> },
-    { id: 'analytics', label: 'Analyses', icon: <BarChart3 size={20} /> },
-  ];
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#0A0A0A] flex flex-col items-center justify-center gap-6">
+        <div className="relative">
+          <Loader2 className="w-16 h-16 text-[#FFD000] animate-spin" />
+          <div className="absolute inset-0 blur-2xl bg-[#FFD000]/20 animate-pulse" />
+        </div>
+        <p className="text-gray-500 font-black uppercase tracking-widest text-xs">Chargement du tableau de bord...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#0A0A0A] flex flex-col lg:flex-row">
-      {/* Desktop Sidebar */}
-      <aside className="w-64 bg-black border-r border-white/10 hidden lg:flex flex-col p-6 sticky top-0 h-screen">
-        <div className="text-2xl font-black text-[#FFD000] mb-12 tracking-tighter">F-QUICK ADMIN</div>
-        
-        <nav className="flex-1 space-y-2">
-          {navLinks.map(link => (
-            <SidebarLink 
-              key={link.id}
-              active={activeTab === link.id} 
-              onClick={() => setActiveTab(link.id as AdminTab)} 
-              icon={link.icon} 
-              label={link.label} 
-            />
+      {/* Sidebar */}
+      <aside className="w-full lg:w-80 bg-black/50 backdrop-blur-xl border-b lg:border-b-0 lg:border-r border-white/5 sticky top-0 z-40 h-auto lg:h-screen flex flex-col">
+        <div className="p-8 flex items-center gap-4">
+          <div className="w-12 h-12 bg-[#FFD000] rounded-2xl flex items-center justify-center rotate-3 shadow-lg shadow-[#FFD000]/20">
+            <Settings className="text-black" size={24} />
+          </div>
+          <div>
+            <h1 className="text-2xl font-black tracking-tighter uppercase italic">ADMIN</h1>
+            <p className="text-[10px] font-black text-[#FFD000] tracking-widest uppercase">F-QUICK DASHBOARD</p>
+          </div>
+        </div>
+
+        <nav className="flex-1 px-4 space-y-2 py-4 lg:py-0 overflow-x-auto lg:overflow-x-visible flex lg:flex-col gap-2 lg:gap-0">
+          {[
+            { id: 'orders', label: 'Commandes', icon: ShoppingBag },
+            { id: 'products', label: 'Produits', icon: Package },
+            { id: 'categories', label: 'Catégories', icon: LayoutGrid },
+            { id: 'livreurs', label: 'Livreurs', icon: Truck },
+            { id: 'analytics', label: 'Analytiques', icon: BarChart3 }
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={cn(
+                "w-full flex items-center gap-4 px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all",
+                activeTab === tab.id 
+                  ? "bg-[#FFD000] text-black shadow-lg shadow-[#FFD000]/10 scale-105" 
+                  : "text-gray-500 hover:text-white hover:bg-white/5"
+              )}
+            >
+              <tab.icon size={20} />
+              <span className="hidden lg:inline">{tab.label}</span>
+            </button>
           ))}
         </nav>
 
-        <button 
-          onClick={handleLogout}
-          className="flex items-center gap-3 px-4 py-3 text-gray-500 hover:text-white transition-colors font-bold"
-        >
-          <LogOut size={20} /> Déconnexion
-        </button>
-      </aside>
-
-      {/* Mobile Topbar */}
-      <header className="lg:hidden bg-black border-b border-white/10 px-6 py-4 flex items-center justify-between sticky top-0 z-50">
-        <div className="flex items-center gap-4">
-          <button 
-            onClick={() => setIsMobileMenuOpen(true)}
-            className="p-2 -ml-2 text-white hover:bg-white/5 rounded-lg transition-colors"
-          >
-            <MenuIcon size={24} />
-          </button>
-          <div className="text-xl font-black text-[#FFD000] tracking-tighter">F-QUICK</div>
-        </div>
-        
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <button className="p-2 bg-white/5 border border-white/10 rounded-lg text-white relative">
-              <Bell size={20} />
-              {notifications.length > 0 && (
-                <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-black" />
-              )}
-            </button>
-          </div>
+        <div className="p-8 border-t border-white/5 mt-auto">
           <button 
             onClick={handleLogout}
-            className="p-2 text-gray-500 hover:text-white transition-colors"
+            className="w-full flex items-center gap-4 px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest text-red-500 hover:bg-red-500/10 transition-all"
           >
             <LogOut size={20} />
+            <span className="hidden lg:inline">Déconnexion</span>
           </button>
         </div>
-      </header>
+      </aside>
 
-      {/* Mobile Drawer */}
-      <AnimatePresence>
-        {isMobileMenuOpen && (
-          <>
+      {/* Main Content */}
+      <main className="flex-1 p-6 lg:p-12 overflow-y-auto">
+        <AnimatePresence mode="wait">
+          {activeTab === 'orders' && (
             <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsMobileMenuOpen(false)}
-              className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] lg:hidden"
-            />
-            <motion.div 
-              initial={{ x: "-100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "-100%" }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="fixed inset-y-0 left-0 w-80 bg-black z-[70] lg:hidden flex flex-col p-6 shadow-2xl"
+              key="orders"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-8"
             >
-              <div className="flex items-center justify-between mb-12">
-                <div className="text-2xl font-black text-[#FFD000] tracking-tighter">F-QUICK ADMIN</div>
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
+                <h2 className="text-4xl font-black tracking-tighter uppercase italic">COMMANDES</h2>
+                <div className="flex flex-wrap gap-4 w-full sm:w-auto">
+                  <div className="relative flex-1 sm:flex-none">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
+                    <input 
+                      type="text" 
+                      placeholder="Rechercher..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full sm:w-64 bg-white/5 border border-white/10 rounded-xl pl-12 pr-4 py-3 outline-none focus:border-[#FFD000] transition-all font-bold text-sm"
+                    />
+                  </div>
+                  <select 
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-[#FFD000] transition-all font-bold text-sm uppercase tracking-widest"
+                  >
+                    <option value="all">TOUS LES STATUTS</option>
+                    <option value="pending">EN ATTENTE</option>
+                    <option value="accepted">PRÉPARATION</option>
+                    <option value="delivering">LIVRAISON</option>
+                    <option value="completed">TERMINÉ</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4">
+                {filteredOrders.map((order) => (
+                  <div 
+                    key={order.id}
+                    className="bg-white/5 rounded-[32px] p-6 border border-white/5 hover:border-white/10 transition-all group"
+                  >
+                    <div className="flex flex-col lg:flex-row justify-between gap-6">
+                      <div className="flex items-start gap-6">
+                        <div className={cn(
+                          "w-16 h-16 rounded-2xl flex items-center justify-center rotate-3 shadow-lg",
+                          order.status === 'completed' ? "bg-green-500/10 text-green-500" :
+                          order.status === 'delivering' ? "bg-orange-500/10 text-orange-500" :
+                          order.status === 'accepted' ? "bg-yellow-500/10 text-yellow-500" :
+                          "bg-blue-500/10 text-blue-500"
+                        )}>
+                          <ShoppingBag size={32} />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-3 mb-1">
+                            <h3 className="text-xl font-black tracking-tighter uppercase italic">{order.customer_name}</h3>
+                            <span className="text-[10px] font-black text-[#FFD000] tracking-widest uppercase bg-[#FFD000]/10 px-2 py-1 rounded-md">
+                              {order.tracking_code}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-4 text-xs font-bold text-gray-500">
+                            <span className="flex items-center gap-1"><Phone size={14} /> {order.customer_phone}</span>
+                            <span className="flex items-center gap-1"><Clock size={14} /> {format(new Date(order.created_at), "HH:mm", { locale: fr })}</span>
+                            <span className="flex items-center gap-1 text-[#FFD000]"><DollarSign size={14} /> {order.total} MAD</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3">
+                        <button 
+                          onClick={() => {
+                            setSelectedItem(order);
+                            setModalType('order_details');
+                            setIsModalOpen(true);
+                          }}
+                          className="p-4 bg-white/5 hover:bg-white/10 rounded-2xl transition-colors text-gray-400 hover:text-white"
+                        >
+                          <Eye size={20} />
+                        </button>
+                        
+                        <div className="flex items-center gap-2 bg-black/40 p-2 rounded-2xl border border-white/5">
+                          {['pending', 'accepted', 'delivering', 'completed'].map((status) => (
+                            <button
+                              key={status}
+                              onClick={() => handleStatusUpdate(order.id, status)}
+                              disabled={isActionLoading}
+                              className={cn(
+                                "px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all",
+                                order.status === status 
+                                  ? "bg-[#FFD000] text-black shadow-lg" 
+                                  : "text-gray-600 hover:text-white hover:bg-white/5"
+                              )}
+                            >
+                              {status === 'pending' ? 'Attente' : 
+                               status === 'accepted' ? 'Prép' : 
+                               status === 'delivering' ? 'Liv' : 'Fini'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'products' && (
+            <motion.div 
+              key="products"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-8"
+            >
+              <div className="flex justify-between items-center">
+                <h2 className="text-4xl font-black tracking-tighter uppercase italic">PRODUITS</h2>
                 <button 
-                  onClick={() => setIsMobileMenuOpen(false)}
-                  className="p-2 bg-white/5 hover:bg-white/10 rounded-xl text-white transition-all"
+                  onClick={() => {
+                    setSelectedItem(null);
+                    setModalType('product');
+                    setIsModalOpen(true);
+                  }}
+                  className="bg-[#FFD000] text-black px-8 py-4 rounded-2xl font-black text-sm flex items-center gap-3 hover:scale-105 transition-transform shadow-xl shadow-[#FFD000]/20"
                 >
-                  <X size={24} />
+                  <Plus size={20} /> AJOUTER UN PRODUIT
                 </button>
               </div>
 
-              <nav className="flex-1 space-y-2 overflow-y-auto pr-2 scrollbar-hide">
-                {navLinks.map(link => (
-                  <SidebarLink 
-                    key={link.id}
-                    active={activeTab === link.id} 
-                    onClick={() => {
-                      setActiveTab(link.id as AdminTab);
-                      setIsMobileMenuOpen(false);
-                    }} 
-                    icon={link.icon} 
-                    label={link.label} 
-                  />
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                {products.map((product) => (
+                  <div key={product.id} className="bg-white/5 rounded-[40px] p-6 border border-white/5 hover:border-[#FFD000]/30 transition-all group">
+                    <div className="relative aspect-video rounded-[24px] overflow-hidden mb-6">
+                      <img 
+                        src={product.image_url} 
+                        alt={product.name}
+                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                        referrerPolicy="no-referrer"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+                      <div className="absolute bottom-4 left-4">
+                        <span className="bg-[#FFD000] text-black px-3 py-1 rounded-lg font-black text-xs">
+                          {product.sizes?.[0]?.price || 0} MAD
+                        </span>
+                      </div>
+                    </div>
+                    
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <h3 className="text-xl font-black tracking-tighter uppercase italic group-hover:text-[#FFD000] transition-colors">{product.name}</h3>
+                        <p className="text-gray-500 text-xs font-bold uppercase tracking-widest">
+                          {categories.find(c => c.id === product.category_id)?.name}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => {
+                            setSelectedItem(product);
+                            setModalType('product');
+                            setIsModalOpen(true);
+                          }}
+                          className="p-3 bg-white/5 hover:bg-white/10 rounded-xl transition-colors text-gray-400 hover:text-white"
+                        >
+                          <Edit2 size={16} />
+                        </button>
+                        <button 
+                          onClick={async () => {
+                            if (confirm("Supprimer ce produit ?")) {
+                              const { error } = await supabase.from('products').delete().eq('id', product.id);
+                              if (error) toast.error("Erreur lors de la suppression");
+                              else {
+                                toast.success("Produit supprimé");
+                                fetchData();
+                              }
+                            }
+                          }}
+                          className="p-3 bg-white/5 hover:bg-red-500/20 rounded-xl transition-colors text-gray-400 hover:text-red-500"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 ))}
-              </nav>
-
-              <button 
-                onClick={handleLogout}
-                className="flex items-center gap-3 px-4 py-4 mt-6 text-gray-500 hover:text-white transition-colors font-bold border-t border-white/10"
-              >
-                <LogOut size={20} /> Déconnexion
-              </button>
+              </div>
             </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-
-      {/* Main Content */}
-      <main className="flex-1 p-6 lg:p-12 overflow-y-auto pb-24 lg:pb-12">
-        <header className="hidden lg:flex flex-col md:flex-row md:items-center justify-between mb-12 gap-6">
-          <div>
-            <h1 className="text-4xl font-black tracking-tighter uppercase">
-              {activeTab === 'dashboard' && "TABLEAU DE BORD"}
-              {activeTab === 'orders' && "GESTION COMMANDES"}
-              {activeTab === 'livreurs' && "GESTION LIVREURS"}
-              {activeTab === 'clients' && "GESTION CLIENTS"}
-              {activeTab === 'products' && "GESTION PRODUITS"}
-              {activeTab === 'categories' && "GESTION CATÉGORIES"}
-              {activeTab === 'analytics' && "ANALYSES & RAPPORTS"}
-            </h1>
-            <p className="text-gray-500 font-medium">
-              {activeTab === 'dashboard' && "Bienvenue, voici l'état de votre restaurant aujourd'hui."}
-              {activeTab === 'orders' && "Gérez et suivez toutes les commandes clients."}
-              {activeTab === 'livreurs' && "Suivez les performances de vos livreurs."}
-              {activeTab === 'clients' && "Consultez votre base de données clients."}
-              {activeTab === 'products' && "Gérez votre catalogue de produits."}
-              {activeTab === 'categories' && "Organisez vos produits par catégories."}
-              {activeTab === 'analytics' && "Visualisez vos performances commerciales."}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-4">
-            {activeTab === 'dashboard' && (
-              <button 
-                onClick={exportToPDF}
-                className="flex items-center gap-2 bg-[#FFD000] text-black hover:opacity-90 px-6 py-3 rounded-xl font-bold transition-all"
-              >
-                <FileText size={18} /> Exporter PDF
-              </button>
-            )}
-            <div className="relative">
-              <button className="p-3 bg-white/5 border border-white/10 rounded-xl text-white relative">
-                <Bell size={20} />
-                {notifications.length > 0 && (
-                  <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-black" />
-                )}
-              </button>
-            </div>
-          </div>
-        </header>
-
-        {/* Mobile Page Title */}
-        <div className="lg:hidden mb-8">
-          <h1 className="text-3xl font-black tracking-tighter uppercase">
-            {activeTab === 'dashboard' && "TABLEAU DE BORD"}
-            {activeTab === 'orders' && "COMMANDES"}
-            {activeTab === 'livreurs' && "LIVREURS"}
-            {activeTab === 'clients' && "CLIENTS"}
-            {activeTab === 'products' && "PRODUITS"}
-            {activeTab === 'categories' && "CATÉGORIES"}
-            {activeTab === 'analytics' && "ANALYSES"}
-          </h1>
-          {activeTab === 'dashboard' && (
-            <button 
-              onClick={exportToPDF}
-              className="mt-4 w-full flex items-center justify-center gap-2 bg-[#FFD000] text-black py-4 rounded-2xl font-black text-sm transition-all"
-            >
-              <FileText size={18} /> EXPORTER RAPPORT PDF
-            </button>
           )}
-        </div>
 
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={activeTab}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.2 }}
-          >
-            {activeTab === 'dashboard' && (
-              <>
-                {/* Stats Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-                  <StatCard 
-                    title="REVENU TOTAL" 
-                    value={`${analytics?.totalRevenue || 0} MAD`} 
-                    icon={<TrendingUp className="text-[#FFD000]" />} 
-                  />
-                  <StatCard 
-                    title="COMMANDES" 
-                    value={analytics?.orderCount || 0} 
-                    icon={<ShoppingBag className="text-blue-500" />} 
-                  />
-                  <StatCard 
-                    title="CLIENTS" 
-                    value={clients.length} 
-                    icon={<Users className="text-purple-500" />} 
-                  />
-                  <StatCard 
-                    title="TOP PRODUIT" 
-                    value={analytics?.bestSellers[0]?.name || "-"} 
-                    icon={<CheckCircle2 className="text-[#FFD000]" />} 
-                  />
-                </div>
+          {activeTab === 'analytics' && (
+            <motion.div 
+              key="analytics"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-12"
+            >
+              <h2 className="text-4xl font-black tracking-tighter uppercase italic">ANALYTIQUES</h2>
 
-                <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 lg:gap-12">
-                  <div className="xl:col-span-2">
-                    <section>
-                      <h2 className="text-2xl font-black tracking-tighter mb-6">NOTIFICATIONS RÉCENTES</h2>
-                      <div className="space-y-4">
-                        {notifications.map(notif => (
-                          <div key={notif.id} className="bg-[#FFD000] text-black rounded-[32px] p-6 lg:p-8 shadow-lg shadow-[#FFD000]/10">
-                            <div className="flex items-start justify-between mb-4">
-                              <div className="font-black text-[10px] flex items-center gap-2 tracking-widest uppercase opacity-80">
-                                <Bell size={14} /> NOUVELLE COMMANDE
-                              </div>
-                              <span className="text-[10px] font-black opacity-50">MAINTENANT</span>
-                            </div>
-                            <p className="text-2xl font-black tracking-tighter mb-1">{notif.customer_name}</p>
-                            <p className="text-sm font-bold opacity-80 mb-4">{notif.customer_phone}</p>
-                            <div className="flex items-center justify-between pt-4 border-t border-white/20">
-                              <span className="text-xl font-black">{notif.total} MAD</span>
-                              <button 
-                                onClick={() => setActiveTab('orders')}
-                                className="bg-white text-[#FFD000] px-4 py-2 rounded-xl text-xs font-black hover:scale-105 transition-transform"
-                              >
-                                VOIR DÉTAILS
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                        {notifications.length === 0 && (
-                          <p className="text-center text-gray-500 font-medium py-12 border-2 border-dashed border-white/5 rounded-[32px]">
-                            Aucune nouvelle notification
-                          </p>
-                        )}
-                      </div>
-                    </section>
+              {/* Stats Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                {[
+                  { label: 'REVENU TOTAL', value: `${analyticsData.totalRevenue.toFixed(2)} MAD`, icon: DollarSign, color: 'text-green-500', bg: 'bg-green-500/10' },
+                  { label: 'COMMANDES TERMINÉES', value: analyticsData.completedOrders, icon: CheckCircle2, color: 'text-blue-500', bg: 'bg-blue-500/10' },
+                  { label: 'PANIER MOYEN', value: `${analyticsData.averageOrderValue.toFixed(2)} MAD`, icon: TrendingUp, color: 'text-[#FFD000]', bg: 'bg-[#FFD000]/10' },
+                  { label: 'TOTAL PRODUITS', value: products.length, icon: Package, color: 'text-orange-500', bg: 'bg-orange-500/10' }
+                ].map((stat, idx) => (
+                  <div key={idx} className="bg-white/5 rounded-[32px] p-8 border border-white/5 relative overflow-hidden group">
+                    <div className={cn("absolute -right-4 -top-4 w-24 h-24 blur-3xl opacity-20 transition-opacity group-hover:opacity-40", stat.bg)} />
+                    <stat.icon className={cn("mb-6", stat.color)} size={32} />
+                    <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">{stat.label}</p>
+                    <p className="text-3xl font-black tracking-tighter">{stat.value}</p>
                   </div>
+                ))}
+              </div>
 
-                  <div className="space-y-12">
-                    <section>
-                      <h2 className="text-2xl font-black tracking-tighter mb-6">TOP 3 PRODUITS</h2>
-                      <div className="space-y-4">
-                        {analytics?.bestSellers.map((item, i) => (
-                          <div key={item.name} className="bg-white/5 border border-white/10 rounded-2xl p-4 flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                              <div className={cn(
-                                "w-8 h-8 rounded-lg flex items-center justify-center font-black text-sm",
-                                i === 0 ? "bg-[#FFD000] text-black" : "bg-white/10 text-white"
-                              )}>
-                                {i + 1}
-                              </div>
-                              <span className="font-bold">{item.name}</span>
-                            </div>
-                            <span className="text-sm font-black text-gray-500">{item.count} ventes</span>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-
-                    <section>
-                      <h2 className="text-2xl font-black tracking-tighter mb-6">TOP 3 CLIENTS</h2>
-                      <div className="space-y-4">
-                        {analytics?.topClients.map((client, i) => (
-                          <div key={client.phone} className="bg-white/5 border border-white/10 rounded-2xl p-4 flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                              <div className={cn(
-                                "w-8 h-8 rounded-lg flex items-center justify-center font-black text-sm",
-                                i === 0 ? "bg-[#FFD000] text-black" : "bg-white/10 text-white"
-                              )}>
-                                {i + 1}
-                              </div>
-                              <div>
-                                <p className="font-bold">{client.name}</p>
-                                <p className="text-[10px] text-gray-500 font-bold">{client.phone}</p>
-                              </div>
-                            </div>
-                            <span className="text-sm font-black text-[#FFD000]">{client.total.toFixed(2)} MAD</span>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {activeTab === 'orders' && (
-              <div className="space-y-6">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <h2 className="text-2xl font-black tracking-tighter">LISTE DES COMMANDES</h2>
-                  <div className="flex flex-wrap items-center gap-4">
-                    <div className="relative">
-                      <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
-                      <select 
-                        value={orderFilter}
-                        onChange={(e) => setOrderFilter(e.target.value as any)}
-                        className="w-full md:w-auto bg-white/5 border border-white/10 rounded-xl pl-10 pr-10 py-3 text-sm outline-none focus:border-[#FFD000] transition-all appearance-none font-bold"
-                      >
-                        <option value="all">Tous les statuts</option>
-                        <option value="pending">En attente</option>
-                        <option value="accepted">Acceptée</option>
-                        <option value="en_livraison">En livraison</option>
-                        <option value="delivered">Livrée</option>
-                        <option value="cancelled">Annulée</option>
-                      </select>
-                    </div>
-                    <div className="relative flex-1 md:flex-none">
-                      <Truck className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
-                      <select 
-                        value={livreurFilter}
-                        onChange={(e) => setLivreurFilter(e.target.value)}
-                        className="w-full md:w-auto bg-white/5 border border-white/10 rounded-xl pl-10 pr-10 py-3 text-sm outline-none focus:border-[#FFD000] transition-all appearance-none font-bold"
-                      >
-                        <option value="all">Tous les livreurs</option>
-                        {livreurs.map(l => (
-                          <option key={l.id} value={l.id}>{l.full_name}</option>
-                        ))}
-                      </select>
-                    </div>
+              {/* Charts */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="bg-white/5 rounded-[40px] p-8 border border-white/5">
+                  <h3 className="text-xl font-black tracking-tighter uppercase italic mb-8 flex items-center gap-3">
+                    <div className="w-2 h-6 bg-[#FFD000] rounded-full" />
+                    REVENU DES 7 DERNIERS JOURS
+                  </h3>
+                  <div className="h-80 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={analyticsData.last7Days}>
+                        <defs>
+                          <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#FFD000" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#FFD000" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
+                        <XAxis 
+                          dataKey="date" 
+                          stroke="#666" 
+                          fontSize={10} 
+                          fontWeight="bold"
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <YAxis 
+                          stroke="#666" 
+                          fontSize={10} 
+                          fontWeight="bold"
+                          axisLine={false}
+                          tickLine={false}
+                          tickFormatter={(value) => `${value} MAD`}
+                        />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#111', border: '1px solid #333', borderRadius: '16px' }}
+                          itemStyle={{ color: '#FFD000', fontWeight: 'bold' }}
+                        />
+                        <Area 
+                          type="monotone" 
+                          dataKey="revenue" 
+                          stroke="#FFD000" 
+                          strokeWidth={4}
+                          fillOpacity={1} 
+                          fill="url(#colorRevenue)" 
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
                   </div>
                 </div>
 
-                <div className="bg-white/5 border border-white/10 rounded-[32px] overflow-x-auto scrollbar-hide">
-                  <table className="w-full text-left min-w-[800px]">
-                    <thead>
-                      <tr className="border-b border-white/10 bg-white/5">
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">CLIENT</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">ARTICLES</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">TOTAL</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">LIVREUR</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">STATUT</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest text-right">ACTIONS</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {orders
-                        .filter(o => orderFilter === 'all' || o.status === orderFilter)
-                        .filter(o => livreurFilter === 'all' || o.livreur_id === livreurFilter)
-                        .map(order => (
-                        <tr key={order.id} className="hover:bg-white/5 transition-colors">
-                          <td className="px-6 py-4">
-                            <div className="font-black text-[#FFD000]">{order.customer_name}</div>
-                            <div className="font-bold text-xs">{order.customer_phone}</div>
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="text-sm font-medium">
-                              {order.order_items.map(i => `${i.product_name} x${i.quantity}`).join(", ")}
-                            </div>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className="font-black text-[#FFD000]">{order.total} MAD</span>
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="text-xs font-bold text-gray-400">
-                              {livreurs.find(l => l.id === order.livreur_id)?.full_name || "Non assigné"}
-                            </div>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className={cn(
-                              "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
-                              order.status === 'delivered' ? "bg-[#FFD000]/20 text-[#FFD000]" :
-                              order.status === 'cancelled' ? "bg-red-500/20 text-red-500" :
-                              "bg-[#FFD000]/20 text-[#FFD000]"
-                            )}>
-                              {order.status.replace('_', ' ')}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-right">
-                            <Link 
-                              to={`/tracking/${order.id}`}
-                              className="inline-flex p-2 bg-white/5 hover:bg-[#FFD000] hover:text-black rounded-lg transition-all"
-                            >
-                              <ExternalLink size={14} />
-                            </Link>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Mobile Stacked Cards for Orders (Optional, but Table is scrollable now) */}
-              </div>
-            )}
-
-            {activeTab === 'livreurs' && (
-              <div className="space-y-6">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                  <h2 className="text-2xl font-black tracking-tighter">LISTE DES LIVREURS</h2>
-                  <button 
-                    onClick={() => {
-                      setEditingLivreur(null);
-                      setLivreurForm({ full_name: "", phone: "", password: "", status: "available" });
-                      setIsLivreurModalOpen(true);
-                    }}
-                    className="w-full md:w-auto flex items-center justify-center gap-2 bg-[#FFD000] text-black px-6 py-4 rounded-2xl font-black text-sm hover:scale-105 transition-transform shadow-lg shadow-[#FFD000]/20"
-                  >
-                    <Plus size={18} /> AJOUTER UN LIVREUR
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {livreurs.map(livreur => {
-                    const livreurOrders = orders.filter(o => o.livreur_id === livreur.id);
-                    return (
-                      <div key={livreur.id} className="bg-white/5 border border-white/10 rounded-[40px] p-8 group relative">
-                        <div className="absolute top-8 right-8 flex gap-2 lg:opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button 
-                            onClick={() => {
-                              setEditingLivreur(livreur);
-                              setLivreurForm({ 
-                                full_name: livreur.full_name || "", 
-                                phone: livreur.phone || "", 
-                                password: livreur.password || "", 
-                                status: livreur.status || "available" 
-                              });
-                              setIsLivreurModalOpen(true);
-                            }}
-                            className="p-3 bg-white/5 hover:bg-blue-500/20 hover:text-blue-500 rounded-xl transition-all"
-                          >
-                            <Edit size={16} />
-                          </button>
-                          <button 
-                            onClick={() => handleDeleteLivreur(livreur.id)}
-                            className="p-3 bg-white/5 hover:bg-red-500/20 hover:text-red-500 rounded-xl transition-all"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-
-                        <div className="flex items-center gap-5 mb-8">
-                          <div className="w-16 h-16 bg-[#FFD000] rounded-[24px] flex items-center justify-center text-black rotate-3 shadow-lg shadow-[#FFD000]/20">
-                            <Truck size={32} />
-                          </div>
-                          <div>
-                            <h3 className="font-black text-2xl tracking-tighter">{livreur.full_name}</h3>
-                            <p className="text-gray-500 font-bold text-sm tracking-widest">{livreur.phone}</p>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4 mb-8">
-                          <div className="bg-black/40 rounded-3xl p-5 border border-white/5">
-                            <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Commandes</p>
-                            <p className="text-2xl font-black text-[#FFD000]">{livreurOrders.length}</p>
-                          </div>
-                          <div className="bg-black/40 rounded-3xl p-5 border border-white/5">
-                            <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Statut</p>
-                            <span className={cn(
-                              "text-[10px] font-black uppercase tracking-widest",
-                              livreur.status === 'available' ? "text-[#FFD000]" : "text-red-500"
-                            )}>
-                              {livreur.status === 'available' ? "Disponible" : "Occupé"}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="text-[10px] text-gray-500 font-bold flex items-center gap-2 tracking-widest uppercase">
-                          <Calendar size={12} />
-                          Inscrit le {format(new Date(livreur.created_at), "dd/MM/yyyy")}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'clients' && (
-              <div className="space-y-6">
-                <h2 className="text-2xl font-black tracking-tighter">BASE DE DONNÉES CLIENTS</h2>
-                <div className="bg-white/5 border border-white/10 rounded-[32px] overflow-x-auto scrollbar-hide">
-                  <table className="w-full text-left min-w-[800px]">
-                    <thead>
-                      <tr className="border-b border-white/10 bg-white/5">
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">CLIENT</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">TÉLÉPHONE</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">TOTAL COMMANDES</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">DERNIÈRE COMMANDE</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">DÉPENSE TOTALE</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {clients.map(client => {
-                        const clientOrders = orders.filter(o => o.customer_phone === client.phone);
-                        const lastOrder = clientOrders[0];
-                        const totalSpent = clientOrders.reduce((sum, o) => sum + o.total, 0);
-                        
-                        return (
-                          <tr key={client.id} className="hover:bg-white/5 transition-colors">
-                            <td className="px-6 py-4">
-                              <div className="font-black text-white">{client.full_name}</div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="font-bold text-[#FFD000]">{client.phone}</div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="text-sm font-black">{clientOrders.length}</div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="text-xs text-gray-500 font-bold">
-                                {lastOrder ? format(new Date(lastOrder.created_at), "dd MMM yyyy", { locale: fr }) : "-"}
-                              </div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="font-black text-[#FFD000]">{totalSpent.toFixed(2)} MAD</div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'products' && (
-              <div className="space-y-6">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                  <h2 className="text-2xl font-black tracking-tighter uppercase italic">Gestion des Produits</h2>
-                  <button 
-                    onClick={() => {
-                      setEditingProduct(null);
-                      // Select the first active category as default
-                      const defaultCategory = categories.find(c => c.is_active)?.id || categories[0]?.id || "";
-                      setProductForm({ 
-                        name: "", 
-                        description: "", 
-                        category_id: defaultCategory, 
-                        image_url: "", 
-                        is_active: true,
-                        sizes: [{ size_name: "Standard", price: 0, is_default: true }]
-                      });
-                      setIsProductModalOpen(true);
-                    }}
-                    className="w-full md:w-auto flex items-center justify-center gap-2 bg-[#FFD000] text-black px-6 py-4 rounded-2xl font-black text-sm hover:scale-105 transition-transform shadow-lg shadow-[#FFD000]/20"
-                  >
-                    <Plus size={18} /> AJOUTER UN PRODUIT
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                  {products.length > 0 ? (
-                    products.map(product => {
-                      const categoryName = categories.find(c => c.id === product.category_id)?.name || "Sans catégorie";
-                      const minPrice = product.sizes?.length ? Math.min(...product.sizes.map(s => s.price)) : 0;
-                      const maxPrice = product.sizes?.length ? Math.max(...product.sizes.map(s => s.price)) : 0;
-                      const priceDisplay = minPrice === maxPrice ? `${minPrice} MAD` : `${minPrice} - ${maxPrice} MAD`;
-
-                      return (
-                        <div key={product.id} className="bg-white/5 border border-white/10 rounded-[40px] overflow-hidden group relative flex flex-col">
-                          <div className="absolute top-4 right-4 flex gap-2 z-10 lg:opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button 
-                              onClick={() => {
-                                setEditingProduct(product);
-                                setProductForm({ 
-                                  name: product.name || "", 
-                                  description: product.description || "", 
-                                  category_id: product.category_id || "", 
-                                  image_url: product.image_url || "", 
-                                  is_active: product.is_active ?? true,
-                                  sizes: product.sizes || []
-                                });
-                                setIsProductModalOpen(true);
-                              }}
-                              className="p-3 bg-black/60 backdrop-blur-md hover:bg-blue-500/20 hover:text-blue-500 rounded-xl transition-all border border-white/10"
-                            >
-                              <Edit size={16} />
-                            </button>
-                            <button 
-                              onClick={() => handleDeleteProduct(product.id)}
-                              className="p-3 bg-black/60 backdrop-blur-md hover:bg-red-500/20 hover:text-red-500 rounded-xl transition-all border border-white/10"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-
-                          <div className="h-40 overflow-hidden relative">
-                            <img 
-                              src={product.image_url || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c"} 
-                              alt={product.name}
-                              className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-                              referrerPolicy="no-referrer"
-                            />
-                            <div className="absolute bottom-4 left-4">
-                              <span className="bg-[#FFD000] text-black text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-wider">
-                                {categoryName}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="p-6 flex flex-col flex-1">
-                            <h3 className="font-black text-xl tracking-tighter mb-2 group-hover:text-[#FFD000] transition-colors">{product.name}</h3>
-                            <p className="text-gray-500 font-medium text-sm line-clamp-2 mb-4 flex-1">
-                              {product.description || "Aucune description fournie."}
-                            </p>
-                            <div className="flex items-center justify-between pt-4 border-t border-white/5">
-                              <span className="text-sm font-black text-[#FFD000]">{priceDisplay}</span>
-                              <span className={cn(
-                                "text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest",
-                                product.is_active ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
-                              )}>
-                                {product.is_active ? "Actif" : "Inactif"}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <div className="col-span-full py-20 text-center bg-white/5 rounded-[40px] border border-dashed border-white/10">
-                      <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-white/5 mb-6">
-                        <ShoppingBag className="w-10 h-10 text-gray-500" />
-                      </div>
-                      <h3 className="text-2xl font-black text-white mb-2">Aucun produit trouvé</h3>
-                      <p className="text-gray-500 max-w-md mx-auto font-bold">
-                        Commencez par ajouter votre premier produit pour qu'il apparaisse ici.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'categories' && (
-              <div className="space-y-6">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                  <h2 className="text-2xl font-black tracking-tighter uppercase italic">Gestion des Catégories</h2>
-                  <button 
-                    onClick={() => {
-                      setEditingCategory(null);
-                      setCategoryForm({ name: "", value: "", is_active: true });
-                      setIsCategoryModalOpen(true);
-                    }}
-                    className="w-full md:w-auto flex items-center justify-center gap-2 bg-[#FFD000] text-black px-6 py-4 rounded-2xl font-black text-sm hover:scale-105 transition-transform shadow-lg shadow-[#FFD000]/20"
-                  >
-                    <Plus size={18} /> AJOUTER UNE CATÉGORIE
-                  </button>
-                </div>
-
-                <div className="bg-white/5 border border-white/10 rounded-[40px] overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                      <thead>
-                        <tr className="border-b border-white/5">
-                          <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">Nom</th>
-                          <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">Valeur / Slug</th>
-                          <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest">Statut</th>
-                          <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase tracking-widest text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5">
-                        {categories.map(category => (
-                          <tr key={category.id} className="hover:bg-white/5 transition-colors">
-                            <td className="px-6 py-4">
-                              <div className="font-black text-white">{category.name}</div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="font-mono text-xs text-gray-500">{category.value}</div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <span className={cn(
-                                "text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest",
-                                category.is_active ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
-                              )}>
-                                {category.is_active ? "Actif" : "Inactif"}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 text-right">
-                              <div className="flex items-center justify-end gap-2">
-                                <button 
-                                  onClick={() => {
-                                    setEditingCategory(category);
-                                    setCategoryForm({ 
-                                      name: category.name || "", 
-                                      value: category.value || "", 
-                                      is_active: category.is_active ?? true 
-                                    });
-                                    setIsCategoryModalOpen(true);
-                                  }}
-                                  className="p-2 bg-white/5 hover:bg-blue-500/20 hover:text-blue-500 rounded-xl transition-all"
-                                >
-                                  <Edit size={16} />
-                                </button>
-                                <button 
-                                  onClick={() => handleDeleteCategory(category.id)}
-                                  className="p-2 bg-white/5 hover:bg-red-500/20 hover:text-red-500 rounded-xl transition-all"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                <div className="bg-white/5 rounded-[40px] p-8 border border-white/5">
+                  <h3 className="text-xl font-black tracking-tighter uppercase italic mb-8 flex items-center gap-3">
+                    <div className="w-2 h-6 bg-[#FFD000] rounded-full" />
+                    RÉPARTITION PAR CATÉGORIE
+                  </h3>
+                  <div className="h-80 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={analyticsData.categoryStats}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={100}
+                          paddingAngle={5}
+                          dataKey="value"
+                        >
+                          {analyticsData.categoryStats.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#111', border: '1px solid #333', borderRadius: '16px' }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
                   </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'analytics' && (
-              <div className="space-y-8">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                  <div>
-                    <h2 className="text-3xl font-black tracking-tighter uppercase italic">Analyses & Statistiques</h2>
-                    <p className="text-gray-500 font-bold">Suivez les performances de votre restaurant en temps réel.</p>
-                  </div>
-                  <div className="flex bg-white/5 p-1 rounded-2xl border border-white/10">
-                    {(['today', '7days', '30days'] as const).map((filter) => (
-                      <button
-                        key={filter}
-                        onClick={() => setAnalyticsFilter(filter)}
-                        className={cn(
-                          "px-6 py-2 rounded-xl font-black text-xs uppercase transition-all",
-                          analyticsFilter === filter 
-                            ? "bg-[#FFD000] text-black shadow-lg shadow-[#FFD000]/20" 
-                            : "text-gray-500 hover:text-white"
-                        )}
-                      >
-                        {filter === 'today' ? "Aujourd'hui" : filter === '7days' ? "7 Jours" : "30 Jours"}
-                      </button>
+                  <div className="flex flex-wrap justify-center gap-6 mt-4">
+                    {analyticsData.categoryStats.map((cat, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[idx % COLORS.length] }} />
+                        <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{cat.name}</span>
+                      </div>
                     ))}
                   </div>
                 </div>
-
-                {/* Key Metrics */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                  {[
-                    { label: "Revenu Total", value: `${analytics?.totalRevenue || 0} DH`, icon: <TrendingUp className="text-[#FFD000]" />, color: "bg-[#FFD000]/10" },
-                    { label: "Commandes", value: analytics?.orderCount || 0, icon: <ShoppingBag className="text-blue-500" />, color: "bg-blue-500/10" },
-                    { label: "Clients", value: analytics?.totalClients || 0, icon: <Users className="text-purple-500" />, color: "bg-purple-500/10" },
-                    { label: "Livreurs", value: analytics?.totalLivreurs || 0, icon: <Truck className="text-green-500" />, color: "bg-green-500/10" },
-                  ].map((stat, i) => (
-                    <div key={i} className="bg-white/5 border border-white/10 p-8 rounded-[40px] relative overflow-hidden group">
-                      <div className={cn("absolute top-0 right-0 w-32 h-32 -mr-8 -mt-8 rounded-full blur-3xl opacity-20 transition-opacity group-hover:opacity-30", stat.color)} />
-                      <div className="relative flex items-center justify-between mb-4">
-                        <div className={cn("p-3 rounded-2xl", stat.color)}>
-                          {stat.icon}
-                        </div>
-                      </div>
-                      <div className="relative">
-                        <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">{stat.label}</div>
-                        <div className="text-3xl font-black tracking-tighter">{stat.value}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Charts */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  {/* Revenue Chart */}
-                  <div className="bg-white/5 border border-white/10 p-8 rounded-[40px]">
-                    <h3 className="text-xl font-black tracking-tighter mb-8 uppercase italic">Évolution du Revenu</h3>
-                    <div className="h-[300px] w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={analytics?.revenueOverTime || []}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-                          <XAxis dataKey="date" stroke="#666" fontSize={10} fontWeight="bold" axisLine={false} tickLine={false} />
-                          <YAxis stroke="#666" fontSize={10} fontWeight="bold" axisLine={false} tickLine={false} tickFormatter={(v) => `${v}DH`} />
-                          <Tooltip 
-                            contentStyle={{ backgroundColor: '#111', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', fontWeight: 'bold' }}
-                            itemStyle={{ color: '#FFD000' }}
-                          />
-                          <Line type="monotone" dataKey="revenue" stroke="#FFD000" strokeWidth={4} dot={{ r: 4, fill: '#FFD000', strokeWidth: 2, stroke: '#000' }} activeDot={{ r: 6, strokeWidth: 0 }} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-
-                  {/* Orders Chart */}
-                  <div className="bg-white/5 border border-white/10 p-8 rounded-[40px]">
-                    <h3 className="text-xl font-black tracking-tighter mb-8 uppercase italic">Commandes par Jour</h3>
-                    <div className="h-[300px] w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={analytics?.ordersPerDay || []}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-                          <XAxis dataKey="date" stroke="#666" fontSize={10} fontWeight="bold" axisLine={false} tickLine={false} />
-                          <YAxis stroke="#666" fontSize={10} fontWeight="bold" axisLine={false} tickLine={false} />
-                          <Tooltip 
-                            contentStyle={{ backgroundColor: '#111', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', fontWeight: 'bold' }}
-                            cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                          />
-                          <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-
-                  {/* Status Distribution */}
-                  <div className="bg-white/5 border border-white/10 p-8 rounded-[40px]">
-                    <h3 className="text-xl font-black tracking-tighter mb-8 uppercase italic">Répartition des Statuts</h3>
-                    <div className="h-[300px] w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={analytics?.statusDistribution || []}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={60}
-                            outerRadius={80}
-                            paddingAngle={5}
-                            dataKey="value"
-                          >
-                            {[
-                              '#FFD000', // En attente
-                              '#3b82f6', // Accepté
-                              '#f59e0b', // En livraison
-                              '#10b981', // Livré
-                              '#ef4444'  // Annulé
-                            ].map((color, index) => (
-                              <Cell key={`cell-${index}`} fill={color} />
-                            ))}
-                          </Pie>
-                          <Tooltip 
-                            contentStyle={{ backgroundColor: '#111', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', fontWeight: 'bold' }}
-                          />
-                          <Legend verticalAlign="bottom" height={36} iconType="circle" />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-
-                  {/* Top Data */}
-                  <div className="bg-white/5 border border-white/10 p-8 rounded-[40px]">
-                    <h3 className="text-xl font-black tracking-tighter mb-8 uppercase italic">Top Performances</h3>
-                    <div className="space-y-6">
-                      {/* Top Products */}
-                      <div>
-                        <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Meilleurs Produits</div>
-                        <div className="space-y-3">
-                          {analytics?.bestSellers.map((p, i) => (
-                            <div key={i} className="flex items-center justify-between p-4 bg-black/40 rounded-2xl border border-white/5">
-                              <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 bg-[#FFD000] text-black rounded-lg flex items-center justify-center font-black text-xs">#{i+1}</div>
-                                <span className="font-bold text-sm">{p.name}</span>
-                              </div>
-                              <span className="text-[#FFD000] font-black text-xs">{p.count} ventes</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Top Clients */}
-                      <div>
-                        <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Meilleurs Clients</div>
-                        <div className="space-y-3">
-                          {analytics?.topClients.map((c, i) => (
-                            <div key={i} className="flex items-center justify-between p-4 bg-black/40 rounded-2xl border border-white/5">
-                              <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 bg-purple-500 text-white rounded-lg flex items-center justify-center font-black text-xs">#{i+1}</div>
-                                <div className="flex flex-col">
-                                  <span className="font-bold text-sm">{c.name}</span>
-                                  <span className="text-[10px] text-gray-500 font-bold">{c.phone}</span>
-                                </div>
-                              </div>
-                              <span className="text-purple-500 font-black text-xs">{c.total} DH</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Top Livreurs */}
-                      <div>
-                        <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Meilleurs Livreurs</div>
-                        <div className="space-y-3">
-                          {analytics?.topLivreurs.map((l, i) => (
-                            <div key={i} className="flex items-center justify-between p-4 bg-black/40 rounded-2xl border border-white/5">
-                              <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 bg-green-500 text-white rounded-lg flex items-center justify-center font-black text-xs">#{i+1}</div>
-                                <span className="font-bold text-sm">{l.name}</span>
-                              </div>
-                              <span className="text-green-500 font-black text-xs">{l.count} livraisons</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
               </div>
-            )}
-          </motion.div>
-        </AnimatePresence>
-
-        {/* Livreur Modal */}
-        <AnimatePresence>
-          {isLivreurModalOpen && (
-            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setIsLivreurModalOpen(false)}
-                className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-              />
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                className="relative w-full max-w-md bg-[#111] border border-white/10 rounded-[40px] p-8 shadow-2xl"
-              >
-                <h2 className="text-3xl font-black tracking-tighter mb-8 uppercase">
-                  {editingLivreur ? "MODIFIER LIVREUR" : "NOUVEAU LIVREUR"}
-                </h2>
-                
-                <form onSubmit={handleSaveLivreur} className="space-y-6">
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">NOM COMPLET</label>
-                      <input 
-                        required
-                        type="text" 
-                        value={livreurForm.full_name || ""}
-                        onChange={e => setLivreurForm({...livreurForm, full_name: e.target.value})}
-                        className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
-                        placeholder="Ex: Ahmed Benani"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">TÉLÉPHONE / LOGIN</label>
-                      <input 
-                        required
-                        type="tel" 
-                        value={livreurForm.phone || ""}
-                        onChange={e => setLivreurForm({...livreurForm, phone: e.target.value})}
-                        className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
-                        placeholder="06..."
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">MOT DE PASSE</label>
-                      <input 
-                        required
-                        type="text" 
-                        value={livreurForm.password || ""}
-                        onChange={e => setLivreurForm({...livreurForm, password: e.target.value})}
-                        className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
-                        placeholder="••••••••"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">STATUT INITIAL</label>
-                      <select 
-                        value={livreurForm.status || "available"}
-                        onChange={e => setLivreurForm({...livreurForm, status: e.target.value as any})}
-                        className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold appearance-none"
-                      >
-                        <option value="available">Disponible</option>
-                        <option value="busy">Occupé</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-4 pt-4">
-                    <button 
-                      type="button"
-                      onClick={() => setIsLivreurModalOpen(false)}
-                      className="flex-1 bg-white/5 text-white py-4 rounded-2xl font-black text-sm hover:bg-white/10 transition-colors"
-                    >
-                      ANNULER
-                    </button>
-                    <button 
-                      type="submit"
-                      className="flex-1 bg-[#FFD000] text-black py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-[#FFD000]/20"
-                    >
-                      ENREGISTRER
-                    </button>
-                  </div>
-                </form>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
-
-        {/* Product Modal */}
-        <AnimatePresence>
-          {isProductModalOpen && (
-            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setIsProductModalOpen(false)}
-                className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-              />
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                className="relative w-full max-w-2xl bg-[#111] border border-white/10 rounded-[40px] p-8 shadow-2xl max-h-[90vh] overflow-y-auto scrollbar-hide"
-              >
-                <h2 className="text-3xl font-black tracking-tighter mb-8 uppercase italic">
-                  {editingProduct ? "MODIFIER PRODUIT" : "NOUVEAU PRODUIT"}
-                </h2>
-                
-                <form onSubmit={handleSaveProduct} className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">NOM DU PRODUIT</label>
-                        <input 
-                          required
-                          type="text" 
-                          value={productForm.name || ""}
-                          onChange={e => setProductForm({...productForm, name: e.target.value})}
-                          className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
-                          placeholder="Ex: Tacos Mixte"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">CATÉGORIE</label>
-                        <select 
-                          required
-                          value={productForm.category_id || ""}
-                          onChange={e => setProductForm({...productForm, category_id: e.target.value})}
-                          className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold appearance-none"
-                        >
-                          <option value="" disabled>Sélectionner une catégorie</option>
-                          {categories.filter(c => c.is_active).map(cat => (
-                            <option key={cat.id} value={cat.id}>{cat.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">URL DE L'IMAGE</label>
-                        <input 
-                          type="url" 
-                          value={productForm.image_url || ""}
-                          onChange={e => setProductForm({...productForm, image_url: e.target.value})}
-                          className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
-                          placeholder="https://images.unsplash.com/..."
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">DESCRIPTION</label>
-                        <textarea 
-                          value={productForm.description || ""}
-                          onChange={e => setProductForm({...productForm, description: e.target.value})}
-                          className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold h-[124px] resize-none"
-                          placeholder="Description du produit..."
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Size Management */}
-                  <div className="space-y-4 pt-4 border-t border-white/5">
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">TAILLES ET PRIX</label>
-                      <button 
-                        type="button"
-                        onClick={() => setProductForm({
-                          ...productForm,
-                          sizes: [...productForm.sizes, { size_name: "", price: 0, is_default: false }]
-                        })}
-                        className="text-[#FFD000] text-xs font-black flex items-center gap-1 hover:underline"
-                      >
-                        <Plus size={14} /> AJOUTER UNE TAILLE
-                      </button>
-                    </div>
-                    
-                    <div className="space-y-3">
-                      {productForm.sizes.map((size, index) => (
-                        <div key={index} className="flex items-center gap-3 bg-black/40 p-4 rounded-2xl border border-white/5">
-                          <div className="flex-1">
-                            <input 
-                              required
-                              type="text"
-                              value={size.size_name}
-                              onChange={e => {
-                                const newSizes = [...productForm.sizes];
-                                newSizes[index].size_name = e.target.value;
-                                setProductForm({...productForm, sizes: newSizes});
-                              }}
-                              placeholder="Nom (ex: XL, 33cl...)"
-                              className="w-full bg-transparent border-none outline-none font-bold text-sm"
-                            />
-                          </div>
-                          <div className="w-24">
-                            <input 
-                              required
-                              type="number"
-                              value={size.price}
-                              onChange={e => {
-                                const newSizes = [...productForm.sizes];
-                                newSizes[index].price = parseFloat(e.target.value) || 0;
-                                setProductForm({...productForm, sizes: newSizes});
-                              }}
-                              placeholder="Prix"
-                              className="w-full bg-transparent border-none outline-none font-black text-sm text-[#FFD000]"
-                            />
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const newSizes = productForm.sizes.map((s, i) => ({
-                                  ...s,
-                                  is_default: i === index
-                                }));
-                                setProductForm({...productForm, sizes: newSizes});
-                              }}
-                              className={cn(
-                                "p-2 rounded-lg transition-all",
-                                size.is_default ? "bg-[#FFD000] text-black" : "bg-white/5 text-gray-500 hover:text-white"
-                              )}
-                              title="Définir comme taille par défaut"
-                            >
-                              <CheckCircle2 size={16} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const newSizes = productForm.sizes.filter((_, i) => i !== index);
-                                setProductForm({...productForm, sizes: newSizes});
-                              }}
-                              className="p-2 bg-white/5 text-gray-500 hover:text-red-500 rounded-lg transition-all"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-4 ml-4">
-                    <input 
-                      type="checkbox" 
-                      id="is_active"
-                      checked={productForm.is_active}
-                      onChange={e => setProductForm({...productForm, is_active: e.target.checked})}
-                      className="w-5 h-5 accent-[#FFD000]"
-                    />
-                    <label htmlFor="is_active" className="text-sm font-bold text-gray-400 cursor-pointer">Produit actif et visible sur le menu</label>
-                  </div>
-
-                  <div className="flex gap-4 pt-4">
-                    <button 
-                      type="button"
-                      onClick={() => setIsProductModalOpen(false)}
-                      className="flex-1 bg-white/5 text-white py-4 rounded-2xl font-black text-sm hover:bg-white/10 transition-colors"
-                    >
-                      ANNULER
-                    </button>
-                    <button 
-                      type="submit"
-                      className="flex-1 bg-[#FFD000] text-black py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-[#FFD000]/20"
-                    >
-                      ENREGISTRER
-                    </button>
-                  </div>
-                </form>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
-
-        {/* Delete Confirmation Modal */}
-        <AnimatePresence>
-          {isDeleteModalOpen && (
-            <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setIsDeleteModalOpen(false)}
-                className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-              />
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                className="relative w-full max-w-md bg-[#111] border border-white/10 rounded-[40px] p-8 shadow-2xl text-center"
-              >
-                <div className="w-20 h-20 bg-red-500/10 rounded-[32px] flex items-center justify-center text-red-500 mx-auto mb-6">
-                  <Trash2 size={40} />
-                </div>
-                
-                <h2 className="text-2xl font-black tracking-tighter mb-2 uppercase italic">
-                  Confirmation
-                </h2>
-                <p className="text-gray-400 font-bold mb-8">
-                  Êtes-vous sûr de vouloir supprimer ce produit ?<br />
-                  <span className="text-red-500/80 text-sm">Cette action est irréversible.</span>
-                </p>
-                
-                <div className="flex gap-4">
-                  <button 
-                    onClick={() => setIsDeleteModalOpen(false)}
-                    className="flex-1 bg-white/5 text-white py-4 rounded-2xl font-black text-sm hover:bg-white/10 transition-colors"
-                  >
-                    ANNULER
-                  </button>
-                  <button 
-                    onClick={confirmDeleteProduct}
-                    className="flex-1 bg-red-500 text-white py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-red-500/20"
-                  >
-                    SUPPRIMER
-                  </button>
-                </div>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
-        {/* Category Modal */}
-        <AnimatePresence>
-          {isCategoryModalOpen && (
-            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setIsCategoryModalOpen(false)}
-                className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-              />
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                className="relative w-full max-w-md bg-[#111] border border-white/10 rounded-[40px] p-8 shadow-2xl"
-              >
-                <h2 className="text-3xl font-black tracking-tighter mb-8 uppercase italic">
-                  {editingCategory ? "MODIFIER CATÉGORIE" : "NOUVELLE CATÉGORIE"}
-                </h2>
-                
-                <form onSubmit={handleSaveCategory} className="space-y-6">
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">NOM DE LA CATÉGORIE</label>
-                      <input 
-                        required
-                        type="text" 
-                        value={categoryForm.name || ""}
-                        onChange={e => {
-                          const name = e.target.value;
-                          const value = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-                          setCategoryForm({...categoryForm, name, value: editingCategory ? (categoryForm.value || "") : value});
-                        }}
-                        className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
-                        placeholder="Ex: Boissons"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">VALEUR / SLUG (URL)</label>
-                      <input 
-                        required
-                        type="text" 
-                        value={categoryForm.value || ""}
-                        onChange={e => setCategoryForm({...categoryForm, value: e.target.value})}
-                        className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold font-mono"
-                        placeholder="Ex: boissons"
-                      />
-                    </div>
-                    <div className="flex items-center gap-4 ml-4">
-                      <input 
-                        type="checkbox" 
-                        id="cat_is_active"
-                        checked={categoryForm.is_active}
-                        onChange={e => setCategoryForm({...categoryForm, is_active: e.target.checked})}
-                        className="w-5 h-5 accent-[#FFD000]"
-                      />
-                      <label htmlFor="cat_is_active" className="text-sm font-bold text-gray-400 cursor-pointer">Catégorie active</label>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-4 pt-4">
-                    <button 
-                      type="button"
-                      onClick={() => setIsCategoryModalOpen(false)}
-                      className="flex-1 bg-white/5 text-white py-4 rounded-2xl font-black text-sm hover:bg-white/10 transition-colors"
-                    >
-                      ANNULER
-                    </button>
-                    <button 
-                      type="submit"
-                      className="flex-1 bg-[#FFD000] text-black py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-[#FFD000]/20"
-                    >
-                      ENREGISTRER
-                    </button>
-                  </div>
-                </form>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
-
-        {/* Category Delete Confirmation Modal */}
-        <AnimatePresence>
-          {isCategoryDeleteModalOpen && (
-            <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setIsCategoryDeleteModalOpen(false)}
-                className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-              />
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                className="relative w-full max-w-md bg-[#111] border border-white/10 rounded-[40px] p-8 shadow-2xl text-center"
-              >
-                <div className="w-20 h-20 bg-red-500/10 rounded-[32px] flex items-center justify-center text-red-500 mx-auto mb-6">
-                  <Trash2 size={40} />
-                </div>
-                
-                <h2 className="text-2xl font-black tracking-tighter mb-2 uppercase italic">
-                  Confirmation
-                </h2>
-                <p className="text-gray-400 font-bold mb-8">
-                  Êtes-vous sûr de vouloir supprimer cette catégorie ?<br />
-                  <span className="text-red-500/80 text-sm">Cette action est irréversible.</span>
-                </p>
-                
-                <div className="flex gap-4">
-                  <button 
-                    onClick={() => setIsCategoryDeleteModalOpen(false)}
-                    className="flex-1 bg-white/5 text-white py-4 rounded-2xl font-black text-sm hover:bg-white/10 transition-colors"
-                  >
-                    ANNULER
-                  </button>
-                  <button 
-                    onClick={confirmDeleteCategory}
-                    className="flex-1 bg-red-500 text-white py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-red-500/20"
-                  >
-                    SUPPRIMER
-                  </button>
-                </div>
-              </motion.div>
-            </div>
+            </motion.div>
           )}
         </AnimatePresence>
       </main>
 
-      {/* Mobile Bottom Navigation */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-black border-t border-white/10 px-6 py-4 flex items-center justify-between z-50 backdrop-blur-lg bg-black/80">
-        <BottomNavLink 
-          active={activeTab === 'dashboard'} 
-          onClick={() => setActiveTab('dashboard')} 
-          icon={<LayoutDashboard size={20} />} 
-          label="Dash" 
-        />
-        <BottomNavLink 
-          active={activeTab === 'orders'} 
-          onClick={() => setActiveTab('orders')} 
-          icon={<ShoppingBag size={20} />} 
-          label="Orders" 
-        />
-        <BottomNavLink 
-          active={activeTab === 'livreurs'} 
-          onClick={() => setActiveTab('livreurs')} 
-          icon={<Truck size={20} />} 
-          label="Livreurs" 
-        />
-        <BottomNavLink 
-          active={activeTab === 'clients'} 
-          onClick={() => setActiveTab('clients')} 
-          icon={<Users size={20} />} 
-          label="Clients" 
-        />
-      </nav>
+      {/* Modals */}
+      <AnimatePresence>
+        {isModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/90 backdrop-blur-md"
+              onClick={() => setIsModalOpen(false)}
+            />
+            
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-2xl bg-[#0A0A0A] border border-white/10 rounded-[48px] overflow-hidden shadow-2xl"
+            >
+              {modalType === 'product' && (
+                <ProductForm 
+                  product={selectedItem} 
+                  categories={categories} 
+                  onClose={() => setIsModalOpen(false)} 
+                  onSuccess={() => {
+                    setIsModalOpen(false);
+                    fetchData();
+                  }}
+                />
+              )}
+              {modalType === 'order_details' && selectedItem && (
+                <OrderDetails 
+                  order={selectedItem} 
+                  onClose={() => setIsModalOpen(false)} 
+                />
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-const SidebarLink: React.FC<{ active: boolean; onClick: () => void; icon: React.ReactNode; label: string }> = ({ active, onClick, icon, label }) => {
-  return (
-    <button 
-      onClick={onClick}
-      className={cn(
-        "w-full flex items-center gap-3 px-4 py-4 rounded-2xl font-black text-sm transition-all",
-        active ? "bg-[#FFD000] text-black shadow-lg shadow-[#FFD000]/20" : "text-gray-500 hover:text-white hover:bg-white/5"
-      )}
-    >
-      {icon} {label}
-    </button>
-  );
-};
+function ProductForm({ product, categories, onClose, onSuccess }: any) {
+  const [formData, setFormData] = useState({
+    name: product?.name || "",
+    description: product?.description || "",
+    image_url: product?.image_url || "",
+    category_id: product?.category_id || categories[0]?.id || "",
+    is_active: product?.is_active ?? true,
+    sizes: product?.sizes || [{ size_name: "Standard", price: 0, is_default: true }]
+  });
+  const [loading, setLoading] = useState(false);
 
-const BottomNavLink: React.FC<{ active: boolean; onClick: () => void; icon: React.ReactNode; label: string }> = ({ active, onClick, icon, label }) => {
-  return (
-    <button 
-      onClick={onClick}
-      className={cn(
-        "flex flex-col items-center gap-1 transition-all",
-        active ? "text-[#FFD000]" : "text-gray-500"
-      )}
-    >
-      {icon}
-      <span className="text-[10px] font-black uppercase tracking-widest">{label}</span>
-    </button>
-  );
-};
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
 
-const StatCard: React.FC<{ title: string; value: string | number; icon: React.ReactNode }> = ({ title, value, icon }) => {
+    try {
+      if (product) {
+        const { error } = await supabase
+          .from('products')
+          .update(formData)
+          .eq('id', product.id);
+        if (error) throw error;
+        toast.success("Produit mis à jour");
+      } else {
+        const { error } = await supabase
+          .from('products')
+          .insert(formData);
+        if (error) throw error;
+        toast.success("Produit créé");
+      }
+      onSuccess();
+    } catch (error) {
+      console.error("Error saving product:", error);
+      toast.error("Erreur lors de l'enregistrement");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="bg-white/5 border border-white/10 rounded-[40px] p-8 hover:border-white/20 transition-all group">
-      <div className="flex items-center justify-between mb-6">
-        <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{title}</span>
-        <div className="p-3 bg-white/5 rounded-2xl group-hover:scale-110 transition-transform">
-          {icon}
+    <form onSubmit={handleSubmit} className="p-12 space-y-8">
+      <div className="flex justify-between items-center">
+        <h2 className="text-3xl font-black tracking-tighter uppercase italic">
+          {product ? "MODIFIER PRODUIT" : "NOUVEAU PRODUIT"}
+        </h2>
+        <button type="button" onClick={onClose} className="p-3 hover:bg-white/5 rounded-2xl transition-colors">
+          <XCircle size={24} className="text-gray-500" />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">NOM DU PRODUIT</label>
+            <input 
+              required
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 outline-none focus:border-[#FFD000] font-bold"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">CATÉGORIE</label>
+            <select 
+              value={formData.category_id}
+              onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
+              className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 outline-none focus:border-[#FFD000] font-bold uppercase tracking-widest"
+            >
+              {categories.map((c: any) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">DESCRIPTION</label>
+            <textarea 
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              rows={3}
+              className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 outline-none focus:border-[#FFD000] font-bold resize-none"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">URL DE L'IMAGE</label>
+            <input 
+              required
+              value={formData.image_url}
+              onChange={(e) => setFormData({ ...formData, image_url: e.target.value })}
+              className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 outline-none focus:border-[#FFD000] font-bold"
+            />
+          </div>
+          
+          <div className="space-y-4">
+            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">TAILLES & PRIX</label>
+            {formData.sizes.map((size, idx) => (
+              <div key={idx} className="flex gap-4">
+                <input 
+                  placeholder="Taille"
+                  value={size.size_name}
+                  onChange={(e) => {
+                    const newSizes = [...formData.sizes];
+                    newSizes[idx].size_name = e.target.value;
+                    setFormData({ ...formData, sizes: newSizes });
+                  }}
+                  className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-[#FFD000] font-bold text-sm"
+                />
+                <input 
+                  type="number"
+                  placeholder="Prix"
+                  value={size.price}
+                  onChange={(e) => {
+                    const newSizes = [...formData.sizes];
+                    newSizes[idx].price = parseFloat(e.target.value);
+                    setFormData({ ...formData, sizes: newSizes });
+                  }}
+                  className="w-24 bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-[#FFD000] font-bold text-sm"
+                />
+                {formData.sizes.length > 1 && (
+                  <button 
+                    type="button"
+                    onClick={() => setFormData({ ...formData, sizes: formData.sizes.filter((_, i) => i !== idx) })}
+                    className="p-3 text-red-500 hover:bg-red-500/10 rounded-xl transition-colors"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                )}
+              </div>
+            ))}
+            <button 
+              type="button"
+              onClick={() => setFormData({ ...formData, sizes: [...formData.sizes, { size_name: "", price: 0, is_default: false }] })}
+              className="w-full py-3 border border-dashed border-white/10 rounded-xl text-gray-500 font-black text-[10px] uppercase tracking-widest hover:border-[#FFD000] hover:text-[#FFD000] transition-all"
+            >
+              + AJOUTER UNE TAILLE
+            </button>
+          </div>
         </div>
       </div>
-      <div className="text-3xl font-black tracking-tighter">{value}</div>
+
+      <div className="pt-8 border-t border-white/5 flex gap-4">
+        <button 
+          type="button" 
+          onClick={onClose}
+          className="flex-1 py-5 rounded-2xl font-black text-sm uppercase tracking-widest text-gray-500 hover:bg-white/5 transition-all"
+        >
+          ANNULER
+        </button>
+        <button 
+          type="submit"
+          disabled={loading}
+          className="flex-[2] bg-[#FFD000] text-black py-5 rounded-2xl font-black text-sm uppercase tracking-widest hover:scale-105 transition-transform shadow-xl shadow-[#FFD000]/20 disabled:opacity-50"
+        >
+          {loading ? <Loader2 className="animate-spin mx-auto" size={20} /> : "ENREGISTRER PRODUIT"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function OrderDetails({ order, onClose }: any) {
+  const [items, setItems] = useState<OrderItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchItems() {
+      const { data } = await supabase.from('order_items').select('*').eq('order_id', order.id);
+      if (data) setItems(data);
+      setLoading(false);
+    }
+    fetchItems();
+  }, [order.id]);
+
+  return (
+    <div className="p-12 space-y-8">
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-3xl font-black tracking-tighter uppercase italic">DÉTAILS COMMANDE</h2>
+          <p className="text-[#FFD000] font-black text-xs tracking-widest uppercase">{order.tracking_code}</p>
+        </div>
+        <button onClick={onClose} className="p-3 hover:bg-white/5 rounded-2xl transition-colors">
+          <XCircle size={24} className="text-gray-500" />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+        <div className="space-y-8">
+          <section>
+            <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">CLIENT</h4>
+            <div className="bg-white/5 rounded-3xl p-6 border border-white/5 space-y-4">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 bg-[#FFD000]/10 rounded-xl flex items-center justify-center text-[#FFD000]">
+                  <Users size={18} />
+                </div>
+                <div>
+                  <p className="font-black text-sm uppercase italic">{order.customer_name}</p>
+                  <p className="text-gray-500 font-bold text-xs">{order.customer_phone}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 bg-[#FFD000]/10 rounded-xl flex items-center justify-center text-[#FFD000]">
+                  <MapPin size={18} />
+                </div>
+                <a 
+                  href={`https://www.google.com/maps?q=${order.latitude},${order.longitude}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-white font-bold text-xs hover:text-[#FFD000] transition-colors flex items-center gap-1"
+                >
+                  Voir sur Maps <ExternalLink size={12} />
+                </a>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">LIVREUR</h4>
+            <div className="bg-white/5 rounded-3xl p-6 border border-white/5">
+              {order.livreurs ? (
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 bg-green-500/10 rounded-xl flex items-center justify-center text-green-500">
+                    <Truck size={18} />
+                  </div>
+                  <div>
+                    <p className="font-black text-sm uppercase italic">{order.livreurs.full_name}</p>
+                    <p className="text-gray-500 font-bold text-xs">Assigné</p>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-gray-500 font-bold text-xs italic text-center py-2">Aucun livreur assigné</p>
+              )}
+            </div>
+          </section>
+        </div>
+
+        <section>
+          <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">ARTICLES</h4>
+          <div className="bg-white/5 rounded-3xl p-6 border border-white/5 space-y-4">
+            {loading ? (
+              <Loader2 className="animate-spin mx-auto text-[#FFD000]" size={24} />
+            ) : (
+              <>
+                {items.map((item) => (
+                  <div key={item.id} className="flex justify-between items-center py-2 border-b border-white/5 last:border-0">
+                    <div>
+                      <p className="font-black text-sm uppercase italic">{item.product_name}</p>
+                      <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest">x{item.quantity}</p>
+                    </div>
+                    <p className="font-black text-[#FFD000]">{item.subtotal} MAD</p>
+                  </div>
+                ))}
+                <div className="pt-4 flex justify-between items-center">
+                  <span className="font-black uppercase italic">Total</span>
+                  <span className="text-2xl font-black text-[#FFD000] tracking-tighter">{order.total} MAD</span>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+      </div>
     </div>
   );
-};
+}
+
+function ExternalLink({ size }: { size: number }) {
+  return (
+    <svg 
+      width={size} 
+      height={size} 
+      viewBox="0 0 24 24" 
+      fill="none" 
+      stroke="currentColor" 
+      strokeWidth="2" 
+      strokeLinecap="round" 
+      strokeLinejoin="round"
+    >
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
+  );
+}

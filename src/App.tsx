@@ -1,7 +1,8 @@
-import { BrowserRouter as Router, Routes, Route, Link, useLocation } from "react-router-dom";
-import { useState, useEffect } from "react";
-import { ShoppingCart, Menu as MenuIcon, X, Phone, MapPin, LayoutDashboard } from "lucide-react";
+import { BrowserRouter as Router, Routes, Route, Link, useLocation, Navigate } from "react-router-dom";
+import React, { useState, useEffect, lazy, Suspense } from "react";
+import { ShoppingCart, Menu as MenuIcon, X, Phone, MapPin, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { Toaster } from "sonner";
 import { CartItem, MenuItem, ProductSize } from "./types";
 import { BUSINESS_INFO } from "./constants";
 import { supabase } from "./lib/supabase";
@@ -10,11 +11,31 @@ import Menu from "./components/Menu";
 import Cart from "./components/Cart";
 import Contact from "./components/Contact";
 import AdminLogin from "./components/AdminLogin";
-import AdminDashboard from "./components/AdminDashboard";
 import LivreurLogin from "./components/LivreurLogin";
-import LivreurPage from "./components/LivreurPage";
-import TrackingPage from "./components/TrackingPage";
 import { cn } from "./lib/utils";
+
+// Lazy load heavy components
+const AdminDashboard = lazy(() => import("./components/AdminDashboard"));
+const LivreurPage = lazy(() => import("./components/LivreurPage"));
+const TrackingPage = lazy(() => import("./components/TrackingPage"));
+
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen bg-black flex flex-col items-center justify-center gap-4">
+      <Loader2 className="text-[#FFD000] animate-spin" size={48} />
+      <p className="text-gray-500 font-black tracking-widest uppercase text-xs">Chargement...</p>
+    </div>
+  );
+}
+
+function ProtectedRoute({ children, authKey }: { children: React.ReactNode; authKey: string }) {
+  const isAuthenticated = localStorage.getItem(authKey);
+  if (!isAuthenticated) {
+    const loginPath = authKey === "admin_authenticated" ? "/admin/login" : "/livreur/login";
+    return <Navigate to={loginPath} replace />;
+  }
+  return <>{children}</>;
+}
 
 function Navbar({ cartCount, onOpenCart }: { cartCount: number; onOpenCart: () => void }) {
   const [isScrolled, setIsScrolled] = useState(false);
@@ -208,22 +229,33 @@ export default function App() {
   return (
     <Router>
       <div className="min-h-screen bg-[#0A0A0A] text-white selection:bg-[#FFD000] selection:text-black">
+        <Toaster position="top-center" richColors />
         <Navbar cartCount={cart.reduce((sum, item) => sum + item.quantity, 0)} onOpenCart={() => setIsCartOpen(true)} />
         
-        <Routes>
-          <Route path="/" element={
-            <main>
-              <Hero settings={settings} />
-              <Menu onAddToCart={addToCart} settings={settings} />
-              <Contact settings={settings} />
-            </main>
-          } />
-          <Route path="/admin/login" element={<AdminLogin />} />
-          <Route path="/admin" element={<AdminDashboard />} />
-          <Route path="/livreur/login" element={<LivreurLogin />} />
-          <Route path="/livreur" element={<LivreurPage />} />
-          <Route path="/tracking/:id" element={<TrackingPage />} />
-        </Routes>
+        <Suspense fallback={<LoadingScreen />}>
+          <Routes>
+            <Route path="/" element={
+              <main>
+                <Hero settings={settings} />
+                <Menu onAddToCart={addToCart} />
+                <Contact settings={settings} />
+              </main>
+            } />
+            <Route path="/admin/login" element={<AdminLogin />} />
+            <Route path="/admin" element={
+              <ProtectedRoute authKey="admin_authenticated">
+                <AdminDashboard />
+              </ProtectedRoute>
+            } />
+            <Route path="/livreur/login" element={<LivreurLogin />} />
+            <Route path="/livreur" element={
+              <ProtectedRoute authKey="livreur_authenticated">
+                <LivreurPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/tracking/:id" element={<TrackingPage />} />
+          </Routes>
+        </Suspense>
 
         <Footer settings={settings} />
 
