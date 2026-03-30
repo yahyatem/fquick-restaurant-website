@@ -1,90 +1,159 @@
-import React, { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "motion/react";
-import { Plus, Info, ShoppingBag, Loader2, Search, ChevronRight } from "lucide-react";
-import { MenuItem, Category, ProductSize } from "../types";
-import { supabase } from "../lib/supabase";
+import { useState, useEffect, useMemo } from "react";
+import { motion } from "motion/react";
+import { Plus, Star, ShoppingBag } from "lucide-react";
+import { Order, Analytics, OrderItem, Livreur, Client, MenuItem, Category, ProductSize } from "../types";
 import { cn } from "../lib/utils";
+import { supabase } from "../lib/supabase";
 
-interface MenuProps {
-  onAddToCart: (product: MenuItem, size: ProductSize) => void;
-}
+// Image optimization helper
+const optimizeImageUrl = (url: string) => {
+  if (!url || !url.includes('unsplash.com')) return url;
+  // If it already has params, don't double up
+  if (url.includes('?')) return url;
+  return `${url}?auto=format&fit=crop&w=500&q=80`;
+};
 
-export default function Menu({ onAddToCart }: MenuProps) {
+const ProductImage = ({ src, alt }: { src: string; alt: string }) => {
+  const [isLoaded, setIsLoaded] = useState(false);
+  const optimizedSrc = optimizeImageUrl(src);
+
+  return (
+    <div className="relative w-full h-full">
+      {!isLoaded && <div className="absolute inset-0 skeleton z-10" />}
+      <img 
+        src={optimizedSrc} 
+        alt={alt}
+        loading="lazy"
+        onLoad={() => setIsLoaded(true)}
+        className={cn(
+          "w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out",
+          isLoaded ? "opacity-100" : "opacity-0"
+        )}
+        referrerPolicy="no-referrer"
+        onError={(e) => {
+          const target = e.target as HTMLImageElement;
+          target.src = "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600";
+        }}
+      />
+    </div>
+  );
+};
+
+export default function Menu({ onAddToCart, settings }: { onAddToCart: (product: MenuItem, size: ProductSize) => void; settings: any }) {
+  const [activeCategoryId, setActiveCategoryId] = useState("");
   const [categories, setCategories] = useState<Category[]>([]);
+  const [bestSellers, setBestSellers] = useState<string[]>([]);
   const [products, setProducts] = useState<MenuItem[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedSizes, setSelectedSizes] = useState<Record<string, ProductSize>>({});
+
+  const isOpen = settings.is_open !== false;
 
   useEffect(() => {
-    async function fetchData() {
+    const fetchData = async () => {
+      setLoading(true);
       try {
-        const [catRes, prodRes] = await Promise.all([
-          supabase.from('categories').select('*').order('order_index'),
-          supabase.from('products').select('*').eq('is_active', true)
-        ]);
-
-        if (catRes.data) {
-          setCategories(catRes.data);
-          if (catRes.data.length > 0) setSelectedCategory(catRes.data[0].id);
+        // Fetch active categories
+        const { data: categoriesData, error: categoriesError } = await supabase
+          .from('categories')
+          .select('*')
+          .eq('is_active', true)
+          .order('created_at', { ascending: true });
+        
+        if (categoriesError) throw categoriesError;
+        setCategories(categoriesData || []);
+        if (categoriesData && categoriesData.length > 0) {
+          setActiveCategoryId(categoriesData[0].id);
         }
-        if (prodRes.data) setProducts(prodRes.data);
-      } catch (error) {
-        console.error("Error fetching menu:", error);
+
+        // Fetch active products with their sizes
+        const { data: productsData, error: productsError } = await supabase
+          .from('products')
+          .select('*, sizes:product_sizes(*)')
+          .eq('is_active', true);
+        
+        if (productsError) throw productsError;
+        
+        const productsWithSizes = (productsData || []).map((p: any) => ({
+          ...p,
+          sizes: p.sizes || []
+        }));
+        
+        setProducts(productsWithSizes);
+
+        // Initialize selected sizes with defaults
+        const defaults: Record<string, ProductSize> = {};
+        productsWithSizes.forEach(p => {
+          const defaultSize = p.sizes.find((s: any) => s.is_default) || p.sizes[0];
+          if (defaultSize) {
+            defaults[p.id] = defaultSize;
+          }
+        });
+        setSelectedSizes(defaults);
+
+        // Fetch best sellers from order_items
+        const { data: itemsData, error: itemsError } = await supabase
+          .from('order_items')
+          .select('product_name');
+        
+        if (itemsError) throw itemsError;
+        
+        const productMap: Record<string, number> = {};
+        itemsData?.forEach(item => {
+          productMap[item.product_name] = (productMap[item.product_name] || 0) + 1;
+        });
+        
+        const bestSellersList = Object.entries(productMap)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([name]) => name);
+        
+        setBestSellers(bestSellersList);
+      } catch (err) {
+        console.error("Error fetching menu data:", err);
       } finally {
         setLoading(false);
       }
-    }
+    };
+
     fetchData();
   }, []);
 
-  const filteredProducts = products.filter(p => {
-    const matchesCategory = selectedCategory ? p.category_id === selectedCategory : true;
-    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                         p.description?.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
+  const filteredMenu = useMemo(() => 
+    products.filter(item => 
+      item.category_id === activeCategoryId
+    ),
+    [products, activeCategoryId]
+  );
 
   if (loading) {
     return (
-      <div className="min-h-[60vh] flex flex-col items-center justify-center gap-4">
-        <div className="relative">
-          <Loader2 className="w-12 h-12 text-[#FFD000] animate-spin" />
-          <div className="absolute inset-0 blur-xl bg-[#FFD000]/20 animate-pulse" />
-        </div>
-        <p className="text-gray-500 font-black uppercase tracking-widest text-xs">Chargement du menu...</p>
+      <div className="py-24 text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#FFD000] mx-auto"></div>
+        <p className="mt-4 text-gray-400 font-bold">Chargement du menu...</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-12">
-      {/* Search & Categories */}
-      <div className="sticky top-20 z-30 bg-[#0A0A0A]/80 backdrop-blur-xl py-6 -mx-4 px-4 border-b border-white/5">
-        <div className="max-w-7xl mx-auto space-y-6">
-          {/* Search Bar */}
-          <div className="relative max-w-md mx-auto">
-            <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-            <input 
-              type="text"
-              placeholder="Rechercher un plat..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-2xl pl-14 pr-6 py-4 outline-none focus:border-[#FFD000] focus:ring-1 focus:ring-[#FFD000] transition-all font-bold text-sm"
-            />
+    <section id="menu" className="py-24 px-6 bg-[#0A0A0A]">
+      <div className="max-w-7xl mx-auto">
+        <div className="flex flex-col md:flex-row md:items-end justify-between mb-12 gap-6">
+          <div>
+            <h2 className="text-4xl md:text-6xl font-black tracking-tighter mb-4">NOTRE <span className="text-[#FFD000]">MENU</span></h2>
+            <p className="text-gray-400 font-medium max-w-md">Sélectionnez vos plats préférés parmi nos catégories variées.</p>
           </div>
-
-          {/* Categories Scroll */}
-          <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-2">
-            {categories.map((cat) => (
+          
+          <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+            {categories.map(cat => (
               <button
                 key={cat.id}
-                onClick={() => setSelectedCategory(cat.id)}
+                onClick={() => setActiveCategoryId(cat.id)}
                 className={cn(
-                  "px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest whitespace-nowrap transition-all border",
-                  selectedCategory === cat.id
-                    ? "bg-[#FFD000] text-black border-[#FFD000] shadow-lg shadow-[#FFD000]/20 scale-105"
-                    : "bg-white/5 text-gray-400 border-white/5 hover:bg-white/10 hover:text-white"
+                  "px-6 py-2 rounded-full font-bold whitespace-nowrap transition-all",
+                  activeCategoryId === cat.id 
+                    ? "bg-[#FFD000] text-black" 
+                    : "bg-white/5 text-white hover:bg-white/10"
                 )}
               >
                 {cat.name}
@@ -92,91 +161,109 @@ export default function Menu({ onAddToCart }: MenuProps) {
             ))}
           </div>
         </div>
-      </div>
 
-      {/* Products Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-        <AnimatePresence mode="popLayout">
-          {filteredProducts.map((product) => (
-            <motion.div
-              layout
-              key={product.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              className="group bg-white/5 rounded-[40px] overflow-hidden border border-white/5 hover:border-[#FFD000]/30 transition-all flex flex-col h-full"
-            >
-              <div className="relative aspect-[4/3] overflow-hidden">
-                <img 
-                  src={product.image_url} 
-                  alt={product.name}
-                  className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                  referrerPolicy="no-referrer"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-[#0A0A0A] via-transparent to-transparent opacity-60" />
-                
-                {/* Price Tag */}
-                <div className="absolute bottom-6 left-6">
-                  <div className="bg-[#FFD000] text-black px-4 py-2 rounded-xl font-black text-lg shadow-xl rotate-[-2deg]">
-                    {product.sizes?.[0]?.price || 0} <span className="text-xs">MAD</span>
-                  </div>
-                </div>
-              </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+          {filteredMenu.length > 0 ? (
+            filteredMenu.map((item, index) => {
+              const selectedSize = selectedSizes[item.id];
+              const categoryName = categories.find(c => c.id === item.category_id)?.name;
 
-              <div className="p-8 flex flex-col flex-1">
-                <div className="flex justify-between items-start mb-4">
-                  <h3 className="text-2xl font-black tracking-tighter uppercase italic group-hover:text-[#FFD000] transition-colors">
-                    {product.name}
-                  </h3>
-                  <button className="p-2 text-gray-500 hover:text-white transition-colors">
-                    <Info size={20} />
-                  </button>
-                </div>
-                
-                <p className="text-gray-400 text-sm font-medium leading-relaxed mb-8 flex-1">
-                  {product.description}
-                </p>
-
-                <div className="space-y-4 mt-auto">
-                  {product.sizes && product.sizes.length > 1 ? (
-                    <div className="grid grid-cols-2 gap-3">
-                      {product.sizes.map((size) => (
-                        <button
-                          key={size.size_name}
-                          onClick={() => onAddToCart(product, size)}
-                          className="flex flex-col items-center gap-1 p-3 bg-black/40 rounded-2xl border border-white/5 hover:border-[#FFD000] transition-all group/btn"
-                        >
-                          <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest group-hover/btn:text-[#FFD000]">{size.size_name}</span>
-                          <span className="font-black text-sm">{size.price} MAD</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => product.sizes?.[0] && onAddToCart(product, product.sizes[0])}
-                      className="w-full bg-white/5 hover:bg-[#FFD000] text-white hover:text-black py-5 rounded-[24px] font-black text-sm flex items-center justify-center gap-3 transition-all group/main shadow-xl hover:shadow-[#FFD000]/20"
-                    >
-                      AJOUTER AU PANIER
-                      <div className="w-8 h-8 bg-white/10 group-hover/main:bg-black/10 rounded-xl flex items-center justify-center transition-colors">
-                        <Plus size={18} />
+              return (
+                <motion.div
+                  key={item.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  whileHover={{ scale: 1.02, y: -5 }}
+                  transition={{ 
+                    opacity: { delay: index * 0.05 },
+                    y: { delay: index * 0.05 },
+                    scale: { duration: 0.2 },
+                    default: { duration: 0.2 }
+                  }}
+                  viewport={{ once: true }}
+                  className="group bg-white/5 border border-white/10 rounded-[32px] overflow-hidden hover:border-[#FFD000]/50 hover:shadow-[0_20px_40px_rgba(255,208,0,0.1)] transition-all flex flex-col"
+                >
+                  {/* Product Image */}
+                  <div className="relative h-48 overflow-hidden">
+                    <ProductImage 
+                      src={item.image_url || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c"} 
+                      alt={item.name}
+                    />
+                    <div className="absolute top-4 left-4 z-20">
+                      <div className="bg-black/60 backdrop-blur-md text-[#FFD000] text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-wider border border-white/10">
+                        {categoryName}
                       </div>
-                    </button>
-                  )}
-                </div>
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
+                    </div>
+                    {bestSellers.includes(item.name) && (
+                      <div className="absolute top-4 right-4 bg-[#FFD000] text-black p-2 rounded-full shadow-lg z-20">
+                        <Star size={14} fill="currentColor" />
+                      </div>
+                    )}
+                  </div>
 
-      {filteredProducts.length === 0 && (
-        <div className="text-center py-20">
-          <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6">
-            <Search size={32} className="text-gray-700" />
-          </div>
-          <p className="text-gray-500 font-black uppercase tracking-widest text-sm">Aucun résultat trouvé</p>
+                  <div className="p-6 flex flex-col flex-1">
+                    <div className="mb-4">
+                      <h3 className="text-xl font-black mb-2 group-hover:text-[#FFD000] transition-colors line-clamp-1">{item.name}</h3>
+                      <p className="text-gray-500 text-sm font-medium line-clamp-2">
+                        {item.description || "Préparé avec des ingrédients frais et locaux pour un goût authentique."}
+                      </p>
+                    </div>
+
+                    {/* Size Selector */}
+                    {item.sizes.length > 1 && (
+                      <div className="flex flex-wrap gap-2 mb-4">
+                        {item.sizes.map(size => (
+                          <button
+                            key={size.id}
+                            onClick={() => setSelectedSizes(prev => ({ ...prev, [item.id]: size }))}
+                            className={cn(
+                              "px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                              selectedSize?.id === size.id
+                                ? "bg-[#FFD000] text-black"
+                                : "bg-white/5 text-gray-500 hover:bg-white/10"
+                            )}
+                          >
+                            {size.size_name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    
+                    <div className="flex items-center justify-between mt-auto pt-4 border-t border-white/5">
+                      <span className="text-2xl font-black text-[#FFD000]">
+                        {selectedSize?.price || 0} <span className="text-xs">MAD</span>
+                      </span>
+                      <button
+                        onClick={() => isOpen && selectedSize && onAddToCart(item, selectedSize)}
+                        disabled={!isOpen || !selectedSize}
+                        className={cn(
+                          "p-3 rounded-2xl transition-all active:scale-95 shadow-lg",
+                          isOpen 
+                            ? "bg-[#FFD000] text-black hover:bg-white shadow-[#FFD000]/10" 
+                            : "bg-white/5 text-gray-500 cursor-not-allowed border border-white/10"
+                        )}
+                      >
+                        <Plus size={20} strokeWidth={3} />
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            })
+          ) : (
+            <div className="col-span-full py-20 text-center bg-white/5 rounded-[32px] border border-dashed border-white/10">
+              <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-white/5 mb-6">
+                <ShoppingBag className="w-10 h-10 text-gray-500" />
+              </div>
+              <h3 className="text-2xl font-black text-white mb-2">Aucun produit trouvé</h3>
+              <p className="text-gray-500 max-w-md mx-auto font-medium">
+                Il n'y a pas encore de produits disponibles dans cette catégorie. 
+                Revenez bientôt pour découvrir nos nouveautés !
+              </p>
+            </div>
+          )}
         </div>
-      )}
-    </div>
+      </div>
+    </section>
   );
 }

@@ -1,30 +1,30 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
-import { X, ShoppingBag, Trash2, Plus, Minus, ArrowRight, MapPin, Phone, User, Loader2, CheckCircle2 } from "lucide-react";
+import { X, Plus, Minus, Send, ShoppingBag, MapPin, Sparkles } from "lucide-react";
 import { CartItem, MenuItem, ProductSize } from "../types";
+import { BUSINESS_INFO } from "../constants";
 import { supabase } from "../lib/supabase";
-import { toast } from "sonner";
-import { cn } from "../lib/utils";
 
 const SUGGESTIONS: MenuItem[] = [
-  {
-    id: "upsell-frites",
-    name: "Frites Croustillantes",
-    description: "Portion généreuse de frites dorées",
-    category_id: "upsell",
-    image_url: "https://images.unsplash.com/photo-1573080496219-bb080dd4f877",
-    is_active: true,
-    sizes: [{ id: "size-frites", product_id: "upsell-frites", size_name: "Standard", price: 15, is_default: true }]
+  { 
+    id: 'upsell-frites', 
+    name: 'Frites Croustillantes', 
+    category_id: 'upsell', 
+    sizes: [{ id: 's1', product_id: 'upsell-frites', size_name: 'Portion', price: 15, is_default: true }] 
   },
-  {
-    id: "upsell-coca",
-    name: "Coca-Cola 33cl",
-    description: "Boisson rafraîchissante",
-    category_id: "upsell",
-    image_url: "https://images.unsplash.com/photo-1622483767028-3f66f32aef97",
-    is_active: true,
-    sizes: [{ id: "size-coca", product_id: "upsell-coca", size_name: "Standard", price: 10, is_default: true }]
-  }
+  { 
+    id: 'upsell-coca', 
+    name: 'Coca-Cola 33cl', 
+    category_id: 'upsell', 
+    sizes: [{ id: 's2', product_id: 'upsell-coca', size_name: '33cl', price: 10, is_default: true }] 
+  },
+  { 
+    id: 'upsell-sauce', 
+    name: 'Sauce Algérienne', 
+    category_id: 'upsell', 
+    sizes: [{ id: 's3', product_id: 'upsell-sauce', size_name: 'Pot', price: 5, is_default: true }] 
+  },
 ];
 
 interface CartProps {
@@ -37,448 +37,418 @@ interface CartProps {
 }
 
 export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, onAddToCart, settings }: CartProps) {
-  const [step, setStep] = useState<'cart' | 'checkout' | 'success'>('cart');
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
+  const navigate = useNavigate();
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [isOrdering, setIsOrdering] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [isLocating, setIsLocating] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [orderId, setOrderId] = useState<string | null>(null);
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [isCapturing, setIsCapturing] = useState(false);
 
-  const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const deliveryFee = settings.delivery_fee || 0;
+  const minOrder = settings.min_order || 0;
+  const isOpen = settings.is_open !== false;
 
-  const validateForm = () => {
-    const newErrors: Record<string, string> = {};
-    
-    if (!customerName.trim()) {
-      newErrors.name = "Le nom est requis";
-    } else if (customerName.trim().length < 3) {
-      newErrors.name = "Le nom doit contenir au moins 3 caractères";
+  const captureLocation = () => {
+    setIsCapturing(true);
+    setLocationError(null);
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setLocation({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          });
+          setIsCapturing(false);
+        },
+        (error) => {
+          console.warn("Geolocation error:", error);
+          let msg = "Erreur de localisation. Veuillez autoriser l'accès.";
+          if (error.code === error.PERMISSION_DENIED) {
+            msg = "Accès à la localisation refusé. Veuillez l'activer dans vos paramètres.";
+          }
+          setLocationError(msg);
+          setIsCapturing(false);
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    } else {
+      setLocationError("La géolocalisation n'est pas supportée par votre navigateur.");
+      setIsCapturing(false);
     }
-
-    const phoneRegex = /^(06|07)\d{8}$/;
-    if (!customerPhone.trim()) {
-      newErrors.phone = "Le numéro de téléphone est requis";
-    } else if (!phoneRegex.test(customerPhone.trim())) {
-      newErrors.phone = "Format invalide (ex: 0612345678)";
-    }
-
-    if (!location) {
-      newErrors.location = "Veuillez partager votre position pour la livraison";
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
   };
 
-  const requestLocation = () => {
-    setIsLocating(true);
-    setErrors(prev => ({ ...prev, location: "" }));
-    
-    if (!navigator.geolocation) {
-      toast.error("La géolocalisation n'est pas supportée par votre navigateur");
-      setIsLocating(false);
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setIsLocating(false);
-        toast.success("Position capturée avec succès !");
-      },
-      (err) => {
-        console.error(err);
-        setIsLocating(false);
-        toast.error("Impossible de récupérer votre position. Veuillez réessayer.");
-      },
-      { enableHighAccuracy: true }
-    );
-  };
+  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const total = subtotal + deliveryFee;
 
   const handleCheckout = async () => {
-    if (!validateForm()) return;
-    if (items.length === 0) {
-      toast.error("Votre panier est vide");
+    // 4. Validate data before insert
+    if (!name || !phone || !location) {
+      alert("Veuillez remplir tous les champs et partager votre localisation.");
       return;
     }
 
-    setIsSubmitting(true);
+    if (items.length === 0) {
+      alert("Votre panier est vide.");
+      return;
+    }
+
+    if (subtotal < minOrder) {
+      alert(`Le montant minimum de commande est de ${minOrder} MAD.`);
+      return;
+    }
+
+    if (!isOpen) {
+      alert(settings.closed_message || "Le restaurant est actuellement fermé.");
+      return;
+    }
+
+    setIsOrdering(true);
+    setError(null);
 
     try {
-      // 1. Create or get client
+      // 1. Fix client handling: Check if a client exists in `clients` by phone
       const { data: clientData, error: clientError } = await supabase
         .from('clients')
-        .upsert({ 
-          phone: customerPhone.trim(), 
-          full_name: customerName.trim() 
-        }, { onConflict: 'phone' })
-        .select()
-        .single();
+        .select('id')
+        .eq('phone', phone)
+        .maybeSingle();
 
-      if (clientError) throw clientError;
+      if (clientError) {
+        console.error("Supabase Client Lookup Error:", clientError); // 5. Debugging
+        throw clientError;
+      }
 
-      // 2. Create order with stronger tracking code
-      const timestamp = Date.now().toString(36).toUpperCase();
-      const random = Math.random().toString(36).substring(2, 5).toUpperCase();
-      const trackingCode = `CMD-${timestamp}-${random}`;
+      let clientId = clientData?.id;
 
-      const { data: orderData, error: orderError } = await supabase
+      // If not, insert a new client
+      if (!clientId) {
+        const { data: newClient, error: createClientError } = await supabase
+          .from('clients')
+          .insert([{ full_name: name, phone }])
+          .select()
+          .single();
+        
+        if (createClientError) {
+          console.error("Supabase Client Creation Error:", createClientError); // 5. Debugging
+          throw createClientError;
+        }
+        clientId = newClient.id;
+      }
+
+      // 2. Fix order insert: Insert into `orders` using ONLY valid fields
+      const trackingCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+      const { data: order, error: orderError } = await supabase
         .from('orders')
-        .insert({
-          client_id: clientData.id,
-          customer_name: customerName.trim(),
-          customer_phone: customerPhone.trim(),
-          latitude: location?.lat,
-          longitude: location?.lng,
+        .insert([{
+          client_id: clientId,
+          customer_name: name,
+          customer_phone: phone,
+          latitude: location.lat,
+          longitude: location.lng,
           total: total,
           status: 'pending',
           tracking_code: trackingCode
-        })
+        }])
         .select()
         .single();
 
-      if (orderError) throw orderError;
+      if (orderError) {
+        console.error("Supabase Order Insert Error:", orderError); // 5. Debugging
+        throw orderError;
+      }
 
-      // 3. Create order items
+      // 3. Fix order_items insert
       const orderItems = items.map(item => ({
-        order_id: orderData.id,
-        product_id: item.product_id, // Will be null for extras
+        order_id: order.id,
+        product_id: item.product_id,
         product_name: item.name,
-        quantity: item.quantity,
+        size_name: item.size_name,
         unit_price: item.price,
+        quantity: item.quantity,
         subtotal: item.price * item.quantity,
-        item_type: item.item_type || 'product'
+        item_type: item.item_type
       }));
 
       const { error: itemsError } = await supabase
         .from('order_items')
         .insert(orderItems);
 
-      if (itemsError) throw itemsError;
+      if (itemsError) {
+        console.error("Supabase Order Items Insert Error:", itemsError); // 5. Debugging
+        throw itemsError;
+      }
 
-      setOrderId(orderData.id);
-      setStep('success');
-      onClearCart();
-      toast.success("Commande envoyée avec succès !");
-    } catch (err) {
-      console.error("Checkout error:", err);
-      toast.error("Une erreur est survenue lors de la commande. Veuillez réessayer.");
+      // 6. Success behavior
+      setIsSuccess(true);
+      onClearCart(); // clear cart
+      
+      setTimeout(() => {
+        setIsSuccess(false);
+        setIsModalOpen(false);
+        onClose();
+        navigate(`/tracking/${order.id}`); // redirect user
+      }, 2000);
+    } catch (err: any) {
+      // 5. Debugging: Show real error
+      console.error("FULL ERROR OBJECT:", err);
+      setError(err.message || "Erreur inconnue");
     } finally {
-      setIsSubmitting(false);
+      setIsOrdering(false);
     }
   };
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] flex items-center justify-end"
+      className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex justify-end"
+      onClick={onClose}
     >
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
-      
-      <motion.div 
+      <motion.div
         initial={{ x: "100%" }}
         animate={{ x: 0 }}
         exit={{ x: "100%" }}
         transition={{ type: "spring", damping: 25, stiffness: 200 }}
-        className="relative w-full max-w-xl h-full bg-[#0A0A0A] border-l border-white/10 flex flex-col shadow-2xl"
+        className="w-full max-w-md bg-[#0A0A0A] h-full flex flex-col shadow-2xl border-l border-white/10"
+        onClick={e => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="p-6 sm:p-8 border-b border-white/10 flex items-center justify-between bg-black/50 backdrop-blur-md sticky top-0 z-10">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-[#FFD000] rounded-2xl flex items-center justify-center rotate-3 shadow-lg shadow-[#FFD000]/20">
-              <ShoppingBag className="text-black" size={24} />
+        <div className="p-6 border-b border-white/10 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="bg-[#FFD000] p-2 rounded-xl text-black">
+              <ShoppingBag size={20} />
             </div>
-            <div>
-              <h2 className="text-2xl font-black tracking-tighter uppercase italic">VOTRE PANIER</h2>
-              <p className="text-gray-500 text-[10px] font-black tracking-widest uppercase">{items.length} ARTICLES</p>
-            </div>
+            <h2 className="text-xl font-black">VOTRE PANIER</h2>
           </div>
-          <button 
-            onClick={onClose}
-            className="p-3 hover:bg-white/5 rounded-2xl transition-colors text-gray-400 hover:text-white"
-          >
+          <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-full transition-colors">
             <X size={24} />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto scrollbar-hide p-6 sm:p-8">
-          <AnimatePresence mode="wait">
-            {step === 'cart' ? (
-              <motion.div 
-                key="cart"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                className="space-y-12"
-              >
-                {items.length === 0 ? (
-                  <div className="text-center py-20">
-                    <div className="w-24 h-24 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6">
-                      <ShoppingBag size={40} className="text-gray-700" />
-                    </div>
-                    <p className="text-gray-500 font-black uppercase tracking-widest text-sm mb-8">Votre panier est vide</p>
-                    <button 
-                      onClick={onClose}
-                      className="bg-[#FFD000] text-black px-8 py-4 rounded-2xl font-black text-sm hover:scale-105 transition-transform"
-                    >
-                      VOIR LE MENU
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div className="space-y-6">
-                      {items.map((item) => (
-                        <motion.div 
-                          layout
-                          key={item.id}
-                          className="flex items-center gap-6 p-4 bg-white/5 rounded-[32px] border border-white/5 group hover:border-[#FFD000]/30 transition-all"
-                        >
-                          <div className="flex-1">
-                            <h3 className="font-black text-lg mb-1 group-hover:text-[#FFD000] transition-colors uppercase italic">{item.name}</h3>
-                            <p className="text-gray-500 text-xs font-bold uppercase tracking-wider">{item.size_name}</p>
-                            <p className="text-[#FFD000] font-black mt-2">{item.price} MAD</p>
-                          </div>
-                          <div className="flex items-center gap-4 bg-black/40 p-2 rounded-2xl border border-white/5">
-                            <button 
-                              onClick={() => onUpdateQuantity(item.id, -1)}
-                              className="p-2 hover:bg-white/10 rounded-xl transition-colors text-gray-400 hover:text-white"
-                            >
-                              <Minus size={16} />
-                            </button>
-                            <span className="font-black w-4 text-center">{item.quantity}</span>
-                            <button 
-                              onClick={() => onUpdateQuantity(item.id, 1)}
-                              className="p-2 hover:bg-white/10 rounded-xl transition-colors text-gray-400 hover:text-white"
-                            >
-                              <Plus size={16} />
-                            </button>
-                          </div>
-                        </motion.div>
-                      ))}
-                    </div>
-
-                    {/* Upsell Section */}
-                    <section className="space-y-6">
-                      <div className="flex items-center gap-3">
-                        <div className="w-2 h-8 bg-[#FFD000] rounded-full" />
-                        <h3 className="text-xl font-black tracking-tighter uppercase italic">COMPLÉTEZ VOTRE REPAS</h3>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {SUGGESTIONS.map((product) => (
-                          <button
-                            key={product.id}
-                            onClick={() => onAddToCart(product, product.sizes[0])}
-                            className="flex items-center gap-4 p-4 bg-white/5 rounded-[28px] border border-white/5 hover:border-[#FFD000]/50 transition-all text-left group"
-                          >
-                            <img 
-                              src={product.image_url} 
-                              alt={product.name}
-                              className="w-16 h-16 rounded-2xl object-cover grayscale group-hover:grayscale-0 transition-all"
-                              referrerPolicy="no-referrer"
-                            />
-                            <div>
-                              <p className="font-black text-xs uppercase italic mb-1">{product.name}</p>
-                              <p className="text-[#FFD000] font-black text-sm">+{product.sizes[0].price} MAD</p>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </section>
-                  </>
-                )}
-              </motion.div>
-            ) : step === 'checkout' ? (
-              <motion.div 
-                key="checkout"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                className="space-y-8"
-              >
-                <div className="space-y-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">NOM COMPLET</label>
-                    <div className="relative">
-                      <User className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-                      <input 
-                        type="text" 
-                        value={customerName}
-                        onChange={(e) => {
-                          setCustomerName(e.target.value);
-                          if (errors.name) setErrors(prev => ({ ...prev, name: "" }));
-                        }}
-                        placeholder="Votre nom"
-                        className={cn(
-                          "w-full bg-white/5 border rounded-[24px] pl-14 pr-6 py-5 outline-none transition-all font-bold",
-                          errors.name ? "border-red-500/50 focus:border-red-500" : "border-white/10 focus:border-[#FFD000]"
-                        )}
-                      />
-                    </div>
-                    {errors.name && <p className="text-red-500 text-[10px] font-bold ml-4 uppercase tracking-wider">{errors.name}</p>}
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">TÉLÉPHONE</label>
-                    <div className="relative">
-                      <Phone className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-                      <input 
-                        type="tel" 
-                        value={customerPhone}
-                        onChange={(e) => {
-                          setCustomerPhone(e.target.value);
-                          if (errors.phone) setErrors(prev => ({ ...prev, phone: "" }));
-                        }}
-                        placeholder="06 / 07..."
-                        className={cn(
-                          "w-full bg-white/5 border rounded-[24px] pl-14 pr-6 py-5 outline-none transition-all font-bold",
-                          errors.phone ? "border-red-500/50 focus:border-red-500" : "border-white/10 focus:border-[#FFD000]"
-                        )}
-                      />
-                    </div>
-                    {errors.phone && <p className="text-red-500 text-[10px] font-bold ml-4 uppercase tracking-wider">{errors.phone}</p>}
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">LIVRAISON</label>
-                    <button 
-                      onClick={requestLocation}
-                      disabled={isLocating}
-                      className={cn(
-                        "w-full flex items-center justify-center gap-3 py-5 rounded-[24px] font-black text-sm transition-all border",
-                        location 
-                          ? "bg-green-500/10 border-green-500/50 text-green-500" 
-                          : errors.location
-                            ? "bg-red-500/5 border-red-500/50 text-red-500"
-                            : "bg-white/5 border-white/10 text-white hover:bg-white/10"
-                      )}
-                    >
-                      {isLocating ? (
-                        <>
-                          <Loader2 size={20} className="animate-spin" />
-                          LOCALISATION EN COURS...
-                        </>
-                      ) : location ? (
-                        <>
-                          <CheckCircle2 size={20} />
-                          POSITION CAPTURÉE
-                        </>
-                      ) : (
-                        <>
-                          <MapPin size={20} />
-                          PARTAGER MA POSITION
-                        </>
-                      )}
-                    </button>
-                    {errors.location && <p className="text-red-500 text-[10px] font-bold ml-4 uppercase tracking-wider">{errors.location}</p>}
-                  </div>
-                </div>
-
-                <div className="bg-white/5 rounded-[32px] p-6 border border-white/5">
-                  <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">RÉSUMÉ DE LA COMMANDE</h4>
-                  <div className="space-y-2 mb-4">
-                    {items.map(item => (
-                      <div key={item.id} className="flex justify-between text-sm font-bold">
-                        <span className="text-gray-400">{item.quantity}x {item.name}</span>
-                        <span>{(item.price * item.quantity).toFixed(2)} MAD</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="pt-4 border-t border-white/10 flex justify-between items-center">
-                    <span className="font-black uppercase italic">Total</span>
-                    <span className="text-2xl font-black text-[#FFD000]">{total.toFixed(2)} MAD</span>
-                  </div>
-                </div>
-              </motion.div>
-            ) : (
-              <motion.div 
-                key="success"
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="text-center py-12"
-              >
-                <div className="w-24 h-24 bg-green-500 rounded-[32px] flex items-center justify-center text-black mx-auto mb-8 rotate-6 shadow-xl shadow-green-500/20">
-                  <CheckCircle2 size={48} />
-                </div>
-                <h2 className="text-4xl font-black tracking-tighter mb-4 uppercase italic">MERCI !</h2>
-                <p className="text-gray-400 font-bold mb-12">Votre commande a été envoyée avec succès. Vous pouvez suivre son état en temps réel.</p>
-                
-                <div className="space-y-4">
-                  <button 
-                    onClick={() => window.location.href = `/tracking/${orderId}`}
-                    className="w-full bg-[#FFD000] text-black py-5 rounded-[24px] font-black text-sm hover:scale-105 transition-transform flex items-center justify-center gap-2"
-                  >
-                    SUIVRE MA COMMANDE <ArrowRight size={20} />
-                  </button>
-                  <button 
-                    onClick={onClose}
-                    className="w-full bg-white/5 text-white py-5 rounded-[24px] font-black text-sm hover:bg-white/10 transition-colors"
-                  >
-                    RETOUR AU MENU
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* Footer */}
-        {step !== 'success' && items.length > 0 && (
-          <div className="p-6 sm:p-8 border-t border-white/10 bg-black/50 backdrop-blur-md">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Total à payer</p>
-                <p className="text-3xl font-black text-[#FFD000] tracking-tighter">{total.toFixed(2)} MAD</p>
-              </div>
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {items.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-center space-y-4 opacity-50">
+              <ShoppingBag size={64} strokeWidth={1} />
+              <p className="font-bold text-lg">Votre panier est vide</p>
               <button 
-                onClick={onClearCart}
-                className="p-4 text-gray-500 hover:text-red-500 transition-colors"
-                title="Vider le panier"
+                onClick={onClose}
+                className="text-[#FFD000] font-black underline underline-offset-4"
               >
-                <Trash2 size={20} />
+                Commencer vos achats
               </button>
             </div>
+          ) : (
+            <>
+              <div className="space-y-6">
+                {items.map(item => (
+                  <div key={item.id} className="flex items-center gap-4 group">
+                    <div className="flex-1">
+                      <h4 className="font-bold text-white group-hover:text-[#FFD000] transition-colors">
+                        {item.name}
+                        {item.size_name && (
+                          <span className="ml-2 text-xs text-gray-500 font-medium">({item.size_name})</span>
+                        )}
+                      </h4>
+                      <p className="text-sm text-gray-500 font-medium">{item.price} MAD</p>
+                    </div>
+                    <div className="flex items-center gap-3 bg-white/5 rounded-xl p-1 border border-white/10">
+                      <button 
+                        onClick={() => onUpdateQuantity(item.id, -1)}
+                        className="p-1 hover:text-[#FFD000] transition-colors"
+                      >
+                        <Minus size={16} strokeWidth={3} />
+                      </button>
+                      <span className="font-black w-4 text-center text-sm">{item.quantity}</span>
+                      <button 
+                        onClick={() => onUpdateQuantity(item.id, 1)}
+                        className="p-1 hover:text-[#FFD000] transition-colors"
+                      >
+                        <Plus size={16} strokeWidth={3} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Upsell Suggestions */}
+              <div className="pt-6 border-t border-white/10">
+                <div className="flex items-center gap-2 mb-4">
+                  <Sparkles className="text-[#FFD000]" size={16} />
+                  <h4 className="text-xs font-black uppercase tracking-widest text-gray-400">Complétez votre repas</h4>
+                </div>
+                <div className="grid gap-3">
+                  {SUGGESTIONS.filter(s => !items.find(i => i.id === s.id)).map(suggestion => (
+                    <button
+                      key={suggestion.id}
+                      onClick={() => onAddToCart(suggestion, suggestion.sizes[0])}
+                      className="flex items-center justify-between p-3 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all group"
+                    >
+                      <div className="text-left">
+                        <p className="text-sm font-bold">{suggestion.name}</p>
+                        <p className="text-xs text-[#FFD000] font-black">{suggestion.sizes[0]?.price || 0} MAD</p>
+                      </div>
+                      <Plus className="text-gray-500 group-hover:text-[#FFD000]" size={18} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {items.length > 0 && (
+          <div className="p-6 bg-white/5 border-t border-white/10 space-y-6">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm text-gray-400 font-bold">
+                <span>SOUS-TOTAL</span>
+                <span>{subtotal} MAD</span>
+              </div>
+              <div className="flex items-center justify-between text-sm text-gray-400 font-bold">
+                <span>LIVRAISON</span>
+                <span>{deliveryFee} MAD</span>
+              </div>
+              <div className="flex items-center justify-between text-xl font-black pt-2 border-t border-white/5">
+                <span>TOTAL</span>
+                <span className="text-[#FFD000]">{total} MAD</span>
+              </div>
+            </div>
             
-            {step === 'cart' ? (
-              <button 
-                onClick={() => setStep('checkout')}
-                className="w-full bg-[#FFD000] text-black py-5 rounded-[24px] font-black text-sm flex items-center justify-center gap-3 hover:scale-105 transition-transform shadow-xl shadow-[#FFD000]/20"
-              >
-                PASSER À LA CAISSE <ArrowRight size={20} />
-              </button>
-            ) : (
-              <div className="flex gap-4">
-                <button 
-                  onClick={() => setStep('cart')}
-                  disabled={isSubmitting}
-                  className="flex-1 bg-white/5 text-white py-5 rounded-[24px] font-black text-sm hover:bg-white/10 transition-colors disabled:opacity-50"
-                >
-                  RETOUR
-                </button>
-                <button 
-                  onClick={handleCheckout}
-                  disabled={isSubmitting}
-                  className="flex-[2] bg-[#FFD000] text-black py-5 rounded-[24px] font-black text-sm flex items-center justify-center gap-3 hover:scale-105 transition-transform shadow-xl shadow-[#FFD000]/20 disabled:opacity-50 disabled:scale-100"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 size={20} className="animate-spin" />
-                      ENVOI EN COURS...
-                    </>
-                  ) : (
-                    <>
-                      CONFIRMER LA COMMANDE <CheckCircle2 size={20} />
-                    </>
-                  )}
-                </button>
+            {subtotal < minOrder && (
+              <div className="p-3 bg-orange-500/10 border border-orange-500/20 rounded-xl text-center">
+                <p className="text-[10px] text-orange-500 font-black uppercase tracking-widest">
+                  Minimum de commande: {minOrder} MAD
+                </p>
               </div>
             )}
+
+            <button
+              onClick={() => setIsModalOpen(true)}
+              disabled={subtotal < minOrder || !isOpen}
+              className="w-full bg-[#FFD000] text-black py-4 rounded-2xl font-black text-lg flex items-center justify-center gap-2 hover:scale-[1.02] transition-transform active:scale-95 disabled:opacity-50 disabled:scale-100"
+            >
+              {!isOpen ? "RESTAURANT FERMÉ" : "COMMANDER"} <Send size={20} />
+            </button>
           </div>
         )}
       </motion.div>
+
+      <AnimatePresence>
+        {isModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] bg-black/90 backdrop-blur-md flex items-center justify-center p-4"
+            onClick={() => !isOrdering && setIsModalOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="w-full max-w-md bg-[#0A0A0A] rounded-3xl p-8 border border-white/10 shadow-2xl space-y-8"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="text-center space-y-2">
+                <h3 className="text-2xl font-black">FINALISER LA COMMANDE</h3>
+                <p className="text-gray-500 font-medium text-sm">Veuillez entrer vos informations de livraison</p>
+              </div>
+
+              {isSuccess ? (
+                <div className="py-12 text-center space-y-4">
+                  <div className="w-20 h-20 bg-[#FFD000] rounded-full flex items-center justify-center mx-auto text-black">
+                    <Sparkles size={40} />
+                  </div>
+                  <h4 className="text-xl font-black">COMMANDE RÉUSSIE !</h4>
+                  <p className="text-gray-500">Votre commande a été enregistrée avec succès.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">NOM COMPLET</label>
+                      <input 
+                        type="text" 
+                        placeholder="Votre nom..."
+                        value={name}
+                        onChange={e => setName(e.target.value)}
+                        className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 focus:border-[#FFD000] outline-none transition-all font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">TÉLÉPHONE</label>
+                      <input 
+                        type="tel" 
+                        placeholder="06..."
+                        value={phone}
+                        onChange={e => setPhone(e.target.value)}
+                        className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 focus:border-[#FFD000] outline-none transition-all font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">LOCALISATION</label>
+                      <button
+                        type="button"
+                        onClick={captureLocation}
+                        disabled={isCapturing}
+                        className={`w-full flex items-center justify-center gap-3 px-4 py-4 rounded-xl border font-bold transition-all ${
+                          location 
+                            ? "bg-green-500/10 border-green-500/50 text-green-500" 
+                            : locationError
+                            ? "bg-red-500/10 border-red-500/50 text-red-500"
+                            : "bg-black border-white/10 text-white hover:border-[#FFD000]"
+                        }`}
+                      >
+                        <MapPin size={20} className={isCapturing ? "animate-bounce" : ""} />
+                        {isCapturing 
+                          ? "RECHERCHE..." 
+                          : location 
+                          ? "LOCALISATION CAPTURÉE" 
+                          : "PARTAGER MA LOCALISATION"}
+                      </button>
+                      {location && (
+                        <p className="text-[10px] font-black text-green-500 uppercase tracking-widest mt-2 text-center">
+                          Localisation capturée avec succès
+                        </p>
+                      )}
+                      {locationError && (
+                        <p className="text-[10px] font-black text-red-500 uppercase tracking-widest mt-2 text-center">
+                          {locationError}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <button
+                      onClick={handleCheckout}
+                      disabled={isOrdering || !name || !phone || !location}
+                      className="w-full bg-[#FFD000] text-black py-4 rounded-2xl font-black text-lg flex items-center justify-center gap-2 hover:scale-[1.02] transition-transform active:scale-95 disabled:opacity-50 disabled:scale-100"
+                    >
+                      {isOrdering ? "CHARGEMENT..." : "CONFIRMER LA COMMANDE"}
+                    </button>
+                    {error && (
+                      <p className="text-red-500 text-xs font-bold text-center animate-pulse">
+                        {error}
+                      </p>
+                    )}
+                    <button
+                      onClick={() => setIsModalOpen(false)}
+                      disabled={isOrdering}
+                      className="w-full text-gray-500 font-black text-sm hover:text-white transition-colors"
+                    >
+                      ANNULER
+                    </button>
+                  </div>
+                </>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
