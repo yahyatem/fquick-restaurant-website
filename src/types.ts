@@ -20,11 +20,12 @@ export interface MenuItem {
 
 export interface CartItem {
   id: string;
-  product_id: string;
+  product_id: string | null;
   name: string;
   size_name: string;
   price: number;
   quantity: number;
+  item_type: 'product' | 'extra';
 }
 
 export interface Client {
@@ -64,12 +65,13 @@ export interface Order {
 export interface OrderItem {
   id: string;
   order_id: string;
-  product_id: string;
+  product_id: string | null;
   product_name: string;
   size_name?: string;
   unit_price: number;
   quantity: number;
   subtotal: number;
+  item_type: 'product' | 'extra';
   created_at: string;
 }
 

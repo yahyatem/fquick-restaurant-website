@@ -173,6 +173,8 @@ export default function App() {
 
   const addToCart = (product: MenuItem, size: ProductSize) => {
     const cartItemId = `${product.id}-${size.size_name}`;
+    const isExtra = product.category_id === 'upsell';
+
     setCart(prev => {
       const existing = prev.find(item => item.id === cartItemId);
       if (existing) {
@@ -180,11 +182,12 @@ export default function App() {
       }
       const newItem: CartItem = {
         id: cartItemId,
-        product_id: product.id,
+        product_id: isExtra ? null : product.id,
         name: product.name,
         size_name: size.size_name,
         price: size.price,
-        quantity: 1
+        quantity: 1,
+        item_type: isExtra ? 'extra' : 'product'
       };
       return [...prev, newItem];
     });

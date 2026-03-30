@@ -169,7 +169,8 @@ export default function Cart({ items, onClose, onUpdateQuantity, onClearCart, on
         size_name: item.size_name,
         unit_price: item.price,
         quantity: item.quantity,
-        subtotal: item.price * item.quantity
+        subtotal: item.price * item.quantity,
+        item_type: item.item_type
       }));
 
       const { error: itemsError } = await supabase
