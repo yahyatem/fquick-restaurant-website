@@ -1,32 +1,28 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { 
-  LayoutDashboard, 
-  ShoppingBag, 
-  TrendingUp, 
-  Users, 
-  Download, 
-  Bell, 
+import {
+  LayoutDashboard,
+  ShoppingBag,
+  TrendingUp,
+  Users,
+  Bell,
   LogOut,
   Calendar,
-  Search,
   CheckCircle2,
-  Clock,
   FileText,
   ExternalLink,
-  User as UserIcon,
   Truck,
-  UserCheck,
   Plus,
   Edit,
   Trash2,
   Filter,
-  ChevronRight,
   Menu as MenuIcon,
   X,
   Package,
   Layers,
-  BarChart3
+  BarChart3,
+  ImagePlus,
+  Loader2
 } from "lucide-react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -36,10 +32,10 @@ import { cn } from "../lib/utils";
 import { supabase } from "../lib/supabase";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  BarChart, Bar, PieChart, Pie, Cell, Legend 
-} from 'recharts';
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, PieChart, Pie, Cell, Legend
+} from "recharts";
 
 interface OrderWithItems extends Order {
   order_items: OrderItem[];
@@ -58,8 +54,7 @@ export default function AdminDashboard() {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [notifications, setNotifications] = useState<OrderWithItems[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  
-  // Livreur Modal State
+
   const [isLivreurModalOpen, setIsLivreurModalOpen] = useState(false);
   const [editingLivreur, setEditingLivreur] = useState<Livreur | null>(null);
   const [livreurForm, setLivreurForm] = useState({
@@ -69,7 +64,6 @@ export default function AdminDashboard() {
     status: "available" as const
   });
 
-  // Product Modal State
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [productToDeleteId, setProductToDeleteId] = useState<string | null>(null);
@@ -82,8 +76,9 @@ export default function AdminDashboard() {
     is_active: true,
     sizes: [] as Partial<ProductSize>[]
   });
+  const [productImageFile, setProductImageFile] = useState<File | null>(null);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
 
-  // Category Modal State
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [isCategoryDeleteModalOpen, setIsCategoryDeleteModalOpen] = useState(false);
   const [categoryToDeleteId, setCategoryToDeleteId] = useState<string | null>(null);
@@ -109,27 +104,21 @@ export default function AdminDashboard() {
 
     fetchData();
 
-    // Supabase real-time subscription
     const subscription = supabase
       .channel('admin_orders')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, async (payload) => {
         const newOrder = payload.new as Order;
-        
-        // Fetch items for the new order
+
         const { data: items } = await supabase
           .from('order_items')
           .select('*')
           .eq('order_id', newOrder.id);
-        
+
         const orderWithItems = { ...newOrder, order_items: items || [] } as OrderWithItems;
-        
-        setOrders(prev => {
-          const updatedOrders = [orderWithItems, ...prev];
-          return updatedOrders;
-        });
+
+        setOrders(prev => [orderWithItems, ...prev]);
         setNotifications(prev => [orderWithItems, ...prev]);
-        
-        // Play notification sound
+
         const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
         audio.play().catch(() => {});
       })
@@ -141,23 +130,30 @@ export default function AdminDashboard() {
   }, [navigate]);
 
   const calculateAnalytics = (
-    orders: OrderWithItems[], 
-    clients: Client[], 
-    livreurs: Livreur[], 
+    orders: OrderWithItems[],
+    clients: Client[],
+    livreurs: Livreur[],
     filter: 'today' | '7days' | '30days'
   ): Analytics => {
     const now = new Date();
+
     const filteredOrders = orders.filter(o => {
       const orderDate = new Date(o.created_at);
+
       if (filter === 'today') {
         return orderDate.toDateString() === now.toDateString();
-      } else if (filter === '7days') {
+      }
+
+      if (filter === '7days') {
         const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
         return orderDate >= sevenDaysAgo;
-      } else if (filter === '30days') {
+      }
+
+      if (filter === '30days') {
         const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
         return orderDate >= thirtyDaysAgo;
       }
+
       return true;
     });
 
@@ -166,32 +162,31 @@ export default function AdminDashboard() {
     const totalClients = clients.length;
     const totalLivreurs = livreurs.length;
 
-    // Top Products
     const productMap: Record<string, number> = {};
     filteredOrders.forEach(o => {
       o.order_items?.forEach(i => {
         productMap[i.product_name] = (productMap[i.product_name] || 0) + i.quantity;
       });
     });
+
     const bestSellers = Object.entries(productMap)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 3);
 
-    // Top Clients
-    const clientMap: Record<string, { name: string, total: number }> = {};
+    const clientMap: Record<string, { name: string; total: number }> = {};
     filteredOrders.forEach(o => {
       if (!clientMap[o.customer_phone]) {
         clientMap[o.customer_phone] = { name: o.customer_name, total: 0 };
       }
       clientMap[o.customer_phone].total += o.total;
     });
+
     const topClients = Object.entries(clientMap)
       .map(([phone, data]) => ({ phone, ...data }))
       .sort((a, b) => b.total - a.total)
       .slice(0, 3);
 
-    // Top Delivery Person
     const livreurMap: Record<string, number> = {};
     filteredOrders.forEach(o => {
       if (o.livreur_id) {
@@ -200,13 +195,13 @@ export default function AdminDashboard() {
         livreurMap[name] = (livreurMap[name] || 0) + 1;
       }
     });
+
     const topLivreurs = Object.entries(livreurMap)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 3);
 
-    // Revenue over time & Orders per day
-    const timeMap: Record<string, { revenue: number, count: number }> = {};
+    const timeMap: Record<string, { revenue: number; count: number }> = {};
     filteredOrders.forEach(o => {
       const date = format(new Date(o.created_at), "dd/MM");
       if (!timeMap[date]) {
@@ -234,7 +229,6 @@ export default function AdminDashboard() {
         return dayA - dayB;
       });
 
-    // Status Distribution
     const statusMap: Record<string, number> = {
       'En attente': 0,
       'Accepté': 0,
@@ -242,13 +236,15 @@ export default function AdminDashboard() {
       'Livré': 0,
       'Annulé': 0
     };
+
     const statusLabels: Record<Order['status'], string> = {
-      'pending': 'En attente',
-      'accepted': 'Accepté',
-      'en_livraison': 'En livraison',
-      'delivered': 'Livré',
-      'cancelled': 'Annulé'
+      pending: 'En attente',
+      accepted: 'Accepté',
+      en_livraison: 'En livraison',
+      delivered: 'Livré',
+      cancelled: 'Annulé'
     };
+
     filteredOrders.forEach(o => {
       const label = statusLabels[o.status];
       statusMap[label] = (statusMap[label] || 0) + 1;
@@ -256,13 +252,13 @@ export default function AdminDashboard() {
 
     const statusDistribution = Object.entries(statusMap).map(([name, value]) => ({ name, value }));
 
-    return { 
-      totalRevenue, 
-      orderCount, 
-      totalClients, 
-      totalLivreurs, 
-      bestSellers, 
-      topClients, 
+    return {
+      totalRevenue,
+      orderCount,
+      totalClients,
+      totalLivreurs,
+      bestSellers,
+      topClients,
       topLivreurs,
       revenueOverTime,
       ordersPerDay,
@@ -307,32 +303,26 @@ export default function AdminDashboard() {
   const exportToPDF = () => {
     const doc = new jsPDF();
     const dateStr = format(new Date(), "dd/MM/yyyy HH:mm");
-    const brandColor: [number, number, number] = [255, 208, 0]; // #FFD000
-    const darkColor: [number, number, number] = [17, 17, 17]; // #111111
+    const brandColor: [number, number, number] = [255, 208, 0];
+    const darkColor: [number, number, number] = [17, 17, 17];
 
-    // Header Background
     doc.setFillColor(darkColor[0], darkColor[1], darkColor[2]);
     doc.rect(0, 0, 210, 45, 'F');
 
-    // Title
     doc.setFont("helvetica", "bold");
     doc.setFontSize(28);
     doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
     doc.text("F-QUICK", 14, 25);
-    
-    // Subtitle
+
     doc.setFontSize(14);
     doc.setTextColor(255, 255, 255);
     doc.text("Rapport des Commandes", 14, 35);
 
-    // Date
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.setTextColor(150, 150, 150);
     doc.text(`Généré le: ${dateStr}`, 196, 35, { align: "right" });
 
-    // Summary Section
-    // Total Orders Card
     doc.setFillColor(245, 245, 245);
     doc.roundedRect(14, 55, 85, 25, 3, 3, 'F');
     doc.setFont("helvetica", "bold");
@@ -343,7 +333,6 @@ export default function AdminDashboard() {
     doc.setTextColor(darkColor[0], darkColor[1], darkColor[2]);
     doc.text(`${analytics?.orderCount || 0}`, 20, 74);
 
-    // Total Revenue Card
     doc.setFillColor(245, 245, 245);
     doc.roundedRect(111, 55, 85, 25, 3, 3, 'F');
     doc.setFont("helvetica", "bold");
@@ -354,7 +343,6 @@ export default function AdminDashboard() {
     doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
     doc.text(`${analytics?.totalRevenue || 0} MAD`, 117, 74);
 
-    // Table
     const tableData = orders.map(o => [
       format(new Date(o.created_at), "dd/MM HH:mm"),
       o.customer_name || o.customer_phone,
@@ -366,8 +354,8 @@ export default function AdminDashboard() {
       startY: 95,
       head: [["Date", "Client", "Articles", "Total"]],
       body: tableData,
-      headStyles: { 
-        fillColor: darkColor, 
+      headStyles: {
+        fillColor: darkColor,
         textColor: brandColor,
         fontSize: 10,
         fontStyle: 'bold',
@@ -395,19 +383,23 @@ export default function AdminDashboard() {
 
   const handleSaveLivreur = async (e: React.FormEvent) => {
     e.preventDefault();
+
     try {
       if (editingLivreur) {
         const { error } = await supabase
           .from('livreurs')
           .update(livreurForm)
           .eq('id', editingLivreur.id);
+
         if (error) throw error;
       } else {
         const { error } = await supabase
           .from('livreurs')
           .insert([livreurForm]);
+
         if (error) throw error;
       }
+
       setIsLivreurModalOpen(false);
       setEditingLivreur(null);
       setLivreurForm({ full_name: "", phone: "", password: "", status: "available" });
@@ -420,11 +412,13 @@ export default function AdminDashboard() {
 
   const handleDeleteLivreur = async (id: string) => {
     if (!confirm("Êtes-vous sûr de vouloir supprimer ce livreur ?")) return;
+
     try {
       const { error } = await supabase
         .from('livreurs')
         .delete()
         .eq('id', id);
+
       if (error) throw error;
       fetchData();
     } catch (err) {
@@ -433,20 +427,78 @@ export default function AdminDashboard() {
     }
   };
 
+  const uploadProductImage = async (file: File) => {
+    const fileExt = file.name.split(".").pop();
+    const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${fileExt}`;
+    const filePath = `products/${fileName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("product-images")
+      .upload(filePath, file, {
+        cacheControl: "3600",
+        upsert: false
+      });
+
+    if (uploadError) {
+      throw uploadError;
+    }
+
+    const { data } = supabase.storage
+      .from("product-images")
+      .getPublicUrl(filePath);
+
+    return data.publicUrl;
+  };
+
+  const deleteImageFromStorage = async (imageUrl?: string | null) => {
+    if (!imageUrl) return;
+
+    try {
+      const marker = "/storage/v1/object/public/product-images/";
+      const index = imageUrl.indexOf(marker);
+
+      if (index === -1) return;
+
+      const filePath = imageUrl.substring(index + marker.length);
+
+      if (!filePath) return;
+
+      await supabase.storage
+        .from("product-images")
+        .remove([filePath]);
+    } catch (error) {
+      console.error("Erreur suppression ancienne image:", error);
+    }
+  };
+
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
+
     if (!productForm.name.trim()) return alert("Le nom est requis");
     if (!productForm.category_id) return alert("La catégorie est requise");
     if (productForm.sizes.length === 0) return alert("Au moins une taille est requise");
 
     try {
+      setIsUploadingImage(true);
+
       let productId = editingProduct?.id;
+      let finalImageUrl = productForm.image_url;
+
+      if (productImageFile) {
+        const uploadedUrl = await uploadProductImage(productImageFile);
+
+        if (editingProduct?.image_url) {
+          await deleteImageFromStorage(editingProduct.image_url);
+        }
+
+        finalImageUrl = uploadedUrl;
+      }
 
       const productPayload = {
         name: productForm.name,
         description: productForm.description,
         category_id: productForm.category_id,
-        image_url: productForm.image_url,
+        image_url: finalImageUrl,
         is_active: productForm.is_active
       };
 
@@ -455,6 +507,7 @@ export default function AdminDashboard() {
           .from('products')
           .update(productPayload)
           .eq('id', editingProduct.id);
+
         if (error) throw error;
       } else {
         const { data, error } = await supabase
@@ -462,19 +515,20 @@ export default function AdminDashboard() {
           .insert([productPayload])
           .select()
           .single();
+
         if (error) throw error;
         productId = data.id;
       }
 
-      // Handle sizes: Delete existing and insert new ones (simplest approach)
       if (productId) {
         const { error: deleteError } = await supabase
           .from('product_sizes')
           .delete()
           .eq('product_id', productId);
+
         if (deleteError) throw deleteError;
 
-        const sizesPayload = productForm.sizes.map(s => ({
+        const sizesPayload = productForm.sizes.map((s) => ({
           product_id: productId,
           size_name: s.size_name,
           price: s.price,
@@ -484,23 +538,29 @@ export default function AdminDashboard() {
         const { error: insertError } = await supabase
           .from('product_sizes')
           .insert(sizesPayload);
+
         if (insertError) throw insertError;
       }
 
       setIsProductModalOpen(false);
       setEditingProduct(null);
-      setProductForm({ 
-        name: "", 
-        description: "", 
-        category_id: "", 
-        image_url: "", 
+      setProductImageFile(null);
+      setProductForm({
+        name: "",
+        description: "",
+        category_id: "",
+        image_url: "",
         is_active: true,
         sizes: []
       });
+
       fetchData();
+      alert(editingProduct ? "Produit modifié avec succès" : "Produit ajouté avec succès");
     } catch (err) {
       console.error(err);
       alert("Erreur lors de l'enregistrement du produit");
+    } finally {
+      setIsUploadingImage(false);
     }
   };
 
@@ -511,19 +571,28 @@ export default function AdminDashboard() {
 
   const confirmDeleteProduct = async () => {
     if (!productToDeleteId) return;
+
     try {
-      // Delete sizes first (if CASCADE is not set)
+      const productToDelete = products.find(p => p.id === productToDeleteId);
+
+      if (productToDelete?.image_url) {
+        await deleteImageFromStorage(productToDelete.image_url);
+      }
+
       const { error: sizesError } = await supabase
         .from('product_sizes')
         .delete()
         .eq('product_id', productToDeleteId);
+
       if (sizesError) throw sizesError;
 
       const { error } = await supabase
         .from('products')
         .delete()
         .eq('id', productToDeleteId);
+
       if (error) throw error;
+
       setIsDeleteModalOpen(false);
       setProductToDeleteId(null);
       fetchData();
@@ -536,6 +605,7 @@ export default function AdminDashboard() {
 
   const handleSaveCategory = async (e: React.FormEvent) => {
     e.preventDefault();
+
     if (!categoryForm.name.trim()) return alert("Le nom est requis");
     if (!categoryForm.value.trim()) return alert("La valeur est requise");
 
@@ -545,13 +615,16 @@ export default function AdminDashboard() {
           .from('categories')
           .update(categoryForm)
           .eq('id', editingCategory.id);
+
         if (error) throw error;
       } else {
         const { error } = await supabase
           .from('categories')
           .insert([categoryForm]);
+
         if (error) throw error;
       }
+
       setIsCategoryModalOpen(false);
       setEditingCategory(null);
       setCategoryForm({ name: "", value: "", is_active: true });
@@ -569,12 +642,15 @@ export default function AdminDashboard() {
 
   const confirmDeleteCategory = async () => {
     if (!categoryToDeleteId) return;
+
     try {
       const { error } = await supabase
         .from('categories')
         .delete()
         .eq('id', categoryToDeleteId);
+
       if (error) throw error;
+
       setIsCategoryDeleteModalOpen(false);
       setCategoryToDeleteId(null);
       fetchData();
@@ -595,7 +671,7 @@ export default function AdminDashboard() {
   };
 
   useEffect(() => {
-    const INACTIVITY_TIMEOUT = 600000; // 10 minutes
+    const INACTIVITY_TIMEOUT = 600000;
     let timeoutId: NodeJS.Timeout;
 
     const resetTimer = () => {
@@ -609,10 +685,8 @@ export default function AdminDashboard() {
       resetTimer();
     };
 
-    // Initial timer
     resetTimer();
 
-    // Events to track
     const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
     events.forEach(event => {
       window.addEventListener(event, handleActivity);
@@ -626,11 +700,13 @@ export default function AdminDashboard() {
     };
   }, [navigate]);
 
-  if (isLoading) return (
-    <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center">
-      <div className="w-12 h-12 border-4 border-[#FFD000] border-t-transparent rounded-full animate-spin" />
-    </div>
-  );
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center">
+        <div className="w-12 h-12 border-4 border-[#FFD000] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   const navLinks: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
@@ -644,23 +720,22 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-[#0A0A0A] flex flex-col lg:flex-row">
-      {/* Desktop Sidebar */}
       <aside className="w-64 bg-black border-r border-white/10 hidden lg:flex flex-col p-6 sticky top-0 h-screen">
         <div className="text-2xl font-black text-[#FFD000] mb-12 tracking-tighter">F-QUICK ADMIN</div>
-        
+
         <nav className="flex-1 space-y-2">
           {navLinks.map(link => (
-            <SidebarLink 
+            <SidebarLink
               key={link.id}
-              active={activeTab === link.id} 
-              onClick={() => setActiveTab(link.id as AdminTab)} 
-              icon={link.icon} 
-              label={link.label} 
+              active={activeTab === link.id}
+              onClick={() => setActiveTab(link.id as AdminTab)}
+              icon={link.icon}
+              label={link.label}
             />
           ))}
         </nav>
 
-        <button 
+        <button
           onClick={handleLogout}
           className="flex items-center gap-3 px-4 py-3 text-gray-500 hover:text-white transition-colors font-bold"
         >
@@ -668,10 +743,9 @@ export default function AdminDashboard() {
         </button>
       </aside>
 
-      {/* Mobile Topbar */}
       <header className="lg:hidden bg-black border-b border-white/10 px-6 py-4 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center gap-4">
-          <button 
+          <button
             onClick={() => setIsMobileMenuOpen(true)}
             className="p-2 -ml-2 text-white hover:bg-white/5 rounded-lg transition-colors"
           >
@@ -679,7 +753,7 @@ export default function AdminDashboard() {
           </button>
           <div className="text-xl font-black text-[#FFD000] tracking-tighter">F-QUICK</div>
         </div>
-        
+
         <div className="flex items-center gap-3">
           <div className="relative">
             <button className="p-2 bg-white/5 border border-white/10 rounded-lg text-white relative">
@@ -689,7 +763,7 @@ export default function AdminDashboard() {
               )}
             </button>
           </div>
-          <button 
+          <button
             onClick={handleLogout}
             className="p-2 text-gray-500 hover:text-white transition-colors"
           >
@@ -698,18 +772,17 @@ export default function AdminDashboard() {
         </div>
       </header>
 
-      {/* Mobile Drawer */}
       <AnimatePresence>
         {isMobileMenuOpen && (
           <>
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsMobileMenuOpen(false)}
               className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] lg:hidden"
             />
-            <motion.div 
+            <motion.div
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
@@ -718,7 +791,7 @@ export default function AdminDashboard() {
             >
               <div className="flex items-center justify-between mb-12">
                 <div className="text-2xl font-black text-[#FFD000] tracking-tighter">F-QUICK ADMIN</div>
-                <button 
+                <button
                   onClick={() => setIsMobileMenuOpen(false)}
                   className="p-2 bg-white/5 hover:bg-white/10 rounded-xl text-white transition-all"
                 >
@@ -728,20 +801,20 @@ export default function AdminDashboard() {
 
               <nav className="flex-1 space-y-2 overflow-y-auto pr-2 scrollbar-hide">
                 {navLinks.map(link => (
-                  <SidebarLink 
+                  <SidebarLink
                     key={link.id}
-                    active={activeTab === link.id} 
+                    active={activeTab === link.id}
                     onClick={() => {
                       setActiveTab(link.id as AdminTab);
                       setIsMobileMenuOpen(false);
-                    }} 
-                    icon={link.icon} 
-                    label={link.label} 
+                    }}
+                    icon={link.icon}
+                    label={link.label}
                   />
                 ))}
               </nav>
 
-              <button 
+              <button
                 onClick={handleLogout}
                 className="flex items-center gap-3 px-4 py-4 mt-6 text-gray-500 hover:text-white transition-colors font-bold border-t border-white/10"
               >
@@ -752,7 +825,6 @@ export default function AdminDashboard() {
         )}
       </AnimatePresence>
 
-      {/* Main Content */}
       <main className="flex-1 p-6 lg:p-12 overflow-y-auto pb-24 lg:pb-12">
         <header className="hidden lg:flex flex-col md:flex-row md:items-center justify-between mb-12 gap-6">
           <div>
@@ -778,7 +850,7 @@ export default function AdminDashboard() {
 
           <div className="flex items-center gap-4">
             {activeTab === 'dashboard' && (
-              <button 
+              <button
                 onClick={exportToPDF}
                 className="flex items-center gap-2 bg-[#FFD000] text-black hover:opacity-90 px-6 py-3 rounded-xl font-bold transition-all"
               >
@@ -796,7 +868,6 @@ export default function AdminDashboard() {
           </div>
         </header>
 
-        {/* Mobile Page Title */}
         <div className="lg:hidden mb-8">
           <h1 className="text-3xl font-black tracking-tighter uppercase">
             {activeTab === 'dashboard' && "TABLEAU DE BORD"}
@@ -808,7 +879,7 @@ export default function AdminDashboard() {
             {activeTab === 'analytics' && "ANALYSES"}
           </h1>
           {activeTab === 'dashboard' && (
-            <button 
+            <button
               onClick={exportToPDF}
               className="mt-4 w-full flex items-center justify-center gap-2 bg-[#FFD000] text-black py-4 rounded-2xl font-black text-sm transition-all"
             >
@@ -827,27 +898,26 @@ export default function AdminDashboard() {
           >
             {activeTab === 'dashboard' && (
               <>
-                {/* Stats Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-                  <StatCard 
-                    title="REVENU TOTAL" 
-                    value={`${analytics?.totalRevenue || 0} MAD`} 
-                    icon={<TrendingUp className="text-[#FFD000]" />} 
+                  <StatCard
+                    title="REVENU TOTAL"
+                    value={`${analytics?.totalRevenue || 0} MAD`}
+                    icon={<TrendingUp className="text-[#FFD000]" />}
                   />
-                  <StatCard 
-                    title="COMMANDES" 
-                    value={analytics?.orderCount || 0} 
-                    icon={<ShoppingBag className="text-blue-500" />} 
+                  <StatCard
+                    title="COMMANDES"
+                    value={analytics?.orderCount || 0}
+                    icon={<ShoppingBag className="text-blue-500" />}
                   />
-                  <StatCard 
-                    title="CLIENTS" 
-                    value={clients.length} 
-                    icon={<Users className="text-purple-500" />} 
+                  <StatCard
+                    title="CLIENTS"
+                    value={clients.length}
+                    icon={<Users className="text-purple-500" />}
                   />
-                  <StatCard 
-                    title="TOP PRODUIT" 
-                    value={analytics?.bestSellers[0]?.name || "-"} 
-                    icon={<CheckCircle2 className="text-[#FFD000]" />} 
+                  <StatCard
+                    title="TOP PRODUIT"
+                    value={analytics?.bestSellers[0]?.name || "-"}
+                    icon={<CheckCircle2 className="text-[#FFD000]" />}
                   />
                 </div>
 
@@ -868,7 +938,7 @@ export default function AdminDashboard() {
                             <p className="text-sm font-bold opacity-80 mb-4">{notif.customer_phone}</p>
                             <div className="flex items-center justify-between pt-4 border-t border-white/20">
                               <span className="text-xl font-black">{notif.total} MAD</span>
-                              <button 
+                              <button
                                 onClick={() => setActiveTab('orders')}
                                 className="bg-white text-[#FFD000] px-4 py-2 rounded-xl text-xs font-black hover:scale-105 transition-transform"
                               >
@@ -941,7 +1011,7 @@ export default function AdminDashboard() {
                   <div className="flex flex-wrap items-center gap-4">
                     <div className="relative">
                       <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
-                      <select 
+                      <select
                         value={orderFilter}
                         onChange={(e) => setOrderFilter(e.target.value as any)}
                         className="w-full md:w-auto bg-white/5 border border-white/10 rounded-xl pl-10 pr-10 py-3 text-sm outline-none focus:border-[#FFD000] transition-all appearance-none font-bold"
@@ -956,7 +1026,7 @@ export default function AdminDashboard() {
                     </div>
                     <div className="relative flex-1 md:flex-none">
                       <Truck className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
-                      <select 
+                      <select
                         value={livreurFilter}
                         onChange={(e) => setLivreurFilter(e.target.value)}
                         className="w-full md:w-auto bg-white/5 border border-white/10 rounded-xl pl-10 pr-10 py-3 text-sm outline-none focus:border-[#FFD000] transition-all appearance-none font-bold"
@@ -987,49 +1057,47 @@ export default function AdminDashboard() {
                         .filter(o => orderFilter === 'all' || o.status === orderFilter)
                         .filter(o => livreurFilter === 'all' || o.livreur_id === livreurFilter)
                         .map(order => (
-                        <tr key={order.id} className="hover:bg-white/5 transition-colors">
-                          <td className="px-6 py-4">
-                            <div className="font-black text-[#FFD000]">{order.customer_name}</div>
-                            <div className="font-bold text-xs">{order.customer_phone}</div>
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="text-sm font-medium">
-                              {order.order_items.map(i => `${i.product_name} x${i.quantity}`).join(", ")}
-                            </div>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className="font-black text-[#FFD000]">{order.total} MAD</span>
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="text-xs font-bold text-gray-400">
-                              {livreurs.find(l => l.id === order.livreur_id)?.full_name || "Non assigné"}
-                            </div>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className={cn(
-                              "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
-                              order.status === 'delivered' ? "bg-[#FFD000]/20 text-[#FFD000]" :
-                              order.status === 'cancelled' ? "bg-red-500/20 text-red-500" :
-                              "bg-[#FFD000]/20 text-[#FFD000]"
-                            )}>
-                              {order.status.replace('_', ' ')}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-right">
-                            <Link 
-                              to={`/tracking/${order.id}`}
-                              className="inline-flex p-2 bg-white/5 hover:bg-[#FFD000] hover:text-black rounded-lg transition-all"
-                            >
-                              <ExternalLink size={14} />
-                            </Link>
-                          </td>
-                        </tr>
-                      ))}
+                          <tr key={order.id} className="hover:bg-white/5 transition-colors">
+                            <td className="px-6 py-4">
+                              <div className="font-black text-[#FFD000]">{order.customer_name}</div>
+                              <div className="font-bold text-xs">{order.customer_phone}</div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="text-sm font-medium">
+                                {order.order_items.map(i => `${i.product_name} x${i.quantity}`).join(", ")}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className="font-black text-[#FFD000]">{order.total} MAD</span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="text-xs font-bold text-gray-400">
+                                {livreurs.find(l => l.id === order.livreur_id)?.full_name || "Non assigné"}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={cn(
+                                "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                                order.status === 'delivered' ? "bg-[#FFD000]/20 text-[#FFD000]" :
+                                order.status === 'cancelled' ? "bg-red-500/20 text-red-500" :
+                                "bg-[#FFD000]/20 text-[#FFD000]"
+                              )}>
+                                {order.status.replace('_', ' ')}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <Link
+                                to={`/tracking/${order.id}`}
+                                className="inline-flex p-2 bg-white/5 hover:bg-[#FFD000] hover:text-black rounded-lg transition-all"
+                              >
+                                <ExternalLink size={14} />
+                              </Link>
+                            </td>
+                          </tr>
+                        ))}
                     </tbody>
                   </table>
                 </div>
-
-                {/* Mobile Stacked Cards for Orders (Optional, but Table is scrollable now) */}
               </div>
             )}
 
@@ -1037,7 +1105,7 @@ export default function AdminDashboard() {
               <div className="space-y-6">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                   <h2 className="text-2xl font-black tracking-tighter">LISTE DES LIVREURS</h2>
-                  <button 
+                  <button
                     onClick={() => {
                       setEditingLivreur(null);
                       setLivreurForm({ full_name: "", phone: "", password: "", status: "available" });
@@ -1052,17 +1120,18 @@ export default function AdminDashboard() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {livreurs.map(livreur => {
                     const livreurOrders = orders.filter(o => o.livreur_id === livreur.id);
+
                     return (
                       <div key={livreur.id} className="bg-white/5 border border-white/10 rounded-[40px] p-8 group relative">
                         <div className="absolute top-8 right-8 flex gap-2 lg:opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button 
+                          <button
                             onClick={() => {
                               setEditingLivreur(livreur);
-                              setLivreurForm({ 
-                                full_name: livreur.full_name || "", 
-                                phone: livreur.phone || "", 
-                                password: livreur.password || "", 
-                                status: livreur.status || "available" 
+                              setLivreurForm({
+                                full_name: livreur.full_name || "",
+                                phone: livreur.phone || "",
+                                password: livreur.password || "",
+                                status: livreur.status || "available"
                               });
                               setIsLivreurModalOpen(true);
                             }}
@@ -1070,7 +1139,7 @@ export default function AdminDashboard() {
                           >
                             <Edit size={16} />
                           </button>
-                          <button 
+                          <button
                             onClick={() => handleDeleteLivreur(livreur.id)}
                             className="p-3 bg-white/5 hover:bg-red-500/20 hover:text-red-500 rounded-xl transition-all"
                           >
@@ -1134,7 +1203,7 @@ export default function AdminDashboard() {
                         const clientOrders = orders.filter(o => o.customer_phone === client.phone);
                         const lastOrder = clientOrders[0];
                         const totalSpent = clientOrders.reduce((sum, o) => sum + o.total, 0);
-                        
+
                         return (
                           <tr key={client.id} className="hover:bg-white/5 transition-colors">
                             <td className="px-6 py-4">
@@ -1167,19 +1236,21 @@ export default function AdminDashboard() {
               <div className="space-y-6">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                   <h2 className="text-2xl font-black tracking-tighter uppercase italic">Gestion des Produits</h2>
-                  <button 
+                  <button
                     onClick={() => {
                       setEditingProduct(null);
-                      // Select the first active category as default
+                      setProductImageFile(null);
                       const defaultCategory = categories.find(c => c.is_active)?.id || categories[0]?.id || "";
-                      setProductForm({ 
-                        name: "", 
-                        description: "", 
-                        category_id: defaultCategory, 
-                        image_url: "", 
+
+                      setProductForm({
+                        name: "",
+                        description: "",
+                        category_id: defaultCategory,
+                        image_url: "",
                         is_active: true,
                         sizes: [{ size_name: "Standard", price: 0, is_default: true }]
                       });
+
                       setIsProductModalOpen(true);
                     }}
                     className="w-full md:w-auto flex items-center justify-center gap-2 bg-[#FFD000] text-black px-6 py-4 rounded-2xl font-black text-sm hover:scale-105 transition-transform shadow-lg shadow-[#FFD000]/20"
@@ -1199,14 +1270,15 @@ export default function AdminDashboard() {
                       return (
                         <div key={product.id} className="bg-white/5 border border-white/10 rounded-[40px] overflow-hidden group relative flex flex-col">
                           <div className="absolute top-4 right-4 flex gap-2 z-10 lg:opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button 
+                            <button
                               onClick={() => {
                                 setEditingProduct(product);
-                                setProductForm({ 
-                                  name: product.name || "", 
-                                  description: product.description || "", 
-                                  category_id: product.category_id || "", 
-                                  image_url: product.image_url || "", 
+                                setProductImageFile(null);
+                                setProductForm({
+                                  name: product.name || "",
+                                  description: product.description || "",
+                                  category_id: product.category_id || "",
+                                  image_url: product.image_url || "",
                                   is_active: product.is_active ?? true,
                                   sizes: product.sizes || []
                                 });
@@ -1216,7 +1288,7 @@ export default function AdminDashboard() {
                             >
                               <Edit size={16} />
                             </button>
-                            <button 
+                            <button
                               onClick={() => handleDeleteProduct(product.id)}
                               className="p-3 bg-black/60 backdrop-blur-md hover:bg-red-500/20 hover:text-red-500 rounded-xl transition-all border border-white/10"
                             >
@@ -1225,8 +1297,8 @@ export default function AdminDashboard() {
                           </div>
 
                           <div className="h-40 overflow-hidden relative">
-                            <img 
-                              src={product.image_url || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c"} 
+                            <img
+                              src={product.image_url || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c"}
                               alt={product.name}
                               className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                               referrerPolicy="no-referrer"
@@ -1275,7 +1347,7 @@ export default function AdminDashboard() {
               <div className="space-y-6">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                   <h2 className="text-2xl font-black tracking-tighter uppercase italic">Gestion des Catégories</h2>
-                  <button 
+                  <button
                     onClick={() => {
                       setEditingCategory(null);
                       setCategoryForm({ name: "", value: "", is_active: true });
@@ -1317,13 +1389,13 @@ export default function AdminDashboard() {
                             </td>
                             <td className="px-6 py-4 text-right">
                               <div className="flex items-center justify-end gap-2">
-                                <button 
+                                <button
                                   onClick={() => {
                                     setEditingCategory(category);
-                                    setCategoryForm({ 
-                                      name: category.name || "", 
-                                      value: category.value || "", 
-                                      is_active: category.is_active ?? true 
+                                    setCategoryForm({
+                                      name: category.name || "",
+                                      value: category.value || "",
+                                      is_active: category.is_active ?? true
                                     });
                                     setIsCategoryModalOpen(true);
                                   }}
@@ -1331,7 +1403,7 @@ export default function AdminDashboard() {
                                 >
                                   <Edit size={16} />
                                 </button>
-                                <button 
+                                <button
                                   onClick={() => handleDeleteCategory(category.id)}
                                   className="p-2 bg-white/5 hover:bg-red-500/20 hover:text-red-500 rounded-xl transition-all"
                                 >
@@ -1362,8 +1434,8 @@ export default function AdminDashboard() {
                         onClick={() => setAnalyticsFilter(filter)}
                         className={cn(
                           "px-6 py-2 rounded-xl font-black text-xs uppercase transition-all",
-                          analyticsFilter === filter 
-                            ? "bg-[#FFD000] text-black shadow-lg shadow-[#FFD000]/20" 
+                          analyticsFilter === filter
+                            ? "bg-[#FFD000] text-black shadow-lg shadow-[#FFD000]/20"
                             : "text-gray-500 hover:text-white"
                         )}
                       >
@@ -1373,7 +1445,6 @@ export default function AdminDashboard() {
                   </div>
                 </div>
 
-                {/* Key Metrics */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                   {[
                     { label: "Revenu Total", value: `${analytics?.totalRevenue || 0} DH`, icon: <TrendingUp className="text-[#FFD000]" />, color: "bg-[#FFD000]/10" },
@@ -1396,9 +1467,7 @@ export default function AdminDashboard() {
                   ))}
                 </div>
 
-                {/* Charts */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  {/* Revenue Chart */}
                   <div className="bg-white/5 border border-white/10 p-8 rounded-[40px]">
                     <h3 className="text-xl font-black tracking-tighter mb-8 uppercase italic">Évolution du Revenu</h3>
                     <div className="h-[300px] w-full">
@@ -1407,7 +1476,7 @@ export default function AdminDashboard() {
                           <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
                           <XAxis dataKey="date" stroke="#666" fontSize={10} fontWeight="bold" axisLine={false} tickLine={false} />
                           <YAxis stroke="#666" fontSize={10} fontWeight="bold" axisLine={false} tickLine={false} tickFormatter={(v) => `${v}DH`} />
-                          <Tooltip 
+                          <Tooltip
                             contentStyle={{ backgroundColor: '#111', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', fontWeight: 'bold' }}
                             itemStyle={{ color: '#FFD000' }}
                           />
@@ -1417,7 +1486,6 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {/* Orders Chart */}
                   <div className="bg-white/5 border border-white/10 p-8 rounded-[40px]">
                     <h3 className="text-xl font-black tracking-tighter mb-8 uppercase italic">Commandes par Jour</h3>
                     <div className="h-[300px] w-full">
@@ -1426,7 +1494,7 @@ export default function AdminDashboard() {
                           <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
                           <XAxis dataKey="date" stroke="#666" fontSize={10} fontWeight="bold" axisLine={false} tickLine={false} />
                           <YAxis stroke="#666" fontSize={10} fontWeight="bold" axisLine={false} tickLine={false} />
-                          <Tooltip 
+                          <Tooltip
                             contentStyle={{ backgroundColor: '#111', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', fontWeight: 'bold' }}
                             cursor={{ fill: 'rgba(255,255,255,0.05)' }}
                           />
@@ -1436,7 +1504,6 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {/* Status Distribution */}
                   <div className="bg-white/5 border border-white/10 p-8 rounded-[40px]">
                     <h3 className="text-xl font-black tracking-tighter mb-8 uppercase italic">Répartition des Statuts</h3>
                     <div className="h-[300px] w-full">
@@ -1452,16 +1519,16 @@ export default function AdminDashboard() {
                             dataKey="value"
                           >
                             {[
-                              '#FFD000', // En attente
-                              '#3b82f6', // Accepté
-                              '#f59e0b', // En livraison
-                              '#10b981', // Livré
-                              '#ef4444'  // Annulé
+                              '#FFD000',
+                              '#3b82f6',
+                              '#f59e0b',
+                              '#10b981',
+                              '#ef4444'
                             ].map((color, index) => (
                               <Cell key={`cell-${index}`} fill={color} />
                             ))}
                           </Pie>
-                          <Tooltip 
+                          <Tooltip
                             contentStyle={{ backgroundColor: '#111', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', fontWeight: 'bold' }}
                           />
                           <Legend verticalAlign="bottom" height={36} iconType="circle" />
@@ -1470,18 +1537,16 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {/* Top Data */}
                   <div className="bg-white/5 border border-white/10 p-8 rounded-[40px]">
                     <h3 className="text-xl font-black tracking-tighter mb-8 uppercase italic">Top Performances</h3>
                     <div className="space-y-6">
-                      {/* Top Products */}
                       <div>
                         <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Meilleurs Produits</div>
                         <div className="space-y-3">
                           {analytics?.bestSellers.map((p, i) => (
                             <div key={i} className="flex items-center justify-between p-4 bg-black/40 rounded-2xl border border-white/5">
                               <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 bg-[#FFD000] text-black rounded-lg flex items-center justify-center font-black text-xs">#{i+1}</div>
+                                <div className="w-8 h-8 bg-[#FFD000] text-black rounded-lg flex items-center justify-center font-black text-xs">#{i + 1}</div>
                                 <span className="font-bold text-sm">{p.name}</span>
                               </div>
                               <span className="text-[#FFD000] font-black text-xs">{p.count} ventes</span>
@@ -1490,14 +1555,13 @@ export default function AdminDashboard() {
                         </div>
                       </div>
 
-                      {/* Top Clients */}
                       <div>
                         <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Meilleurs Clients</div>
                         <div className="space-y-3">
                           {analytics?.topClients.map((c, i) => (
                             <div key={i} className="flex items-center justify-between p-4 bg-black/40 rounded-2xl border border-white/5">
                               <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 bg-purple-500 text-white rounded-lg flex items-center justify-center font-black text-xs">#{i+1}</div>
+                                <div className="w-8 h-8 bg-purple-500 text-white rounded-lg flex items-center justify-center font-black text-xs">#{i + 1}</div>
                                 <div className="flex flex-col">
                                   <span className="font-bold text-sm">{c.name}</span>
                                   <span className="text-[10px] text-gray-500 font-bold">{c.phone}</span>
@@ -1509,14 +1573,13 @@ export default function AdminDashboard() {
                         </div>
                       </div>
 
-                      {/* Top Livreurs */}
                       <div>
                         <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Meilleurs Livreurs</div>
                         <div className="space-y-3">
                           {analytics?.topLivreurs.map((l, i) => (
                             <div key={i} className="flex items-center justify-between p-4 bg-black/40 rounded-2xl border border-white/5">
                               <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 bg-green-500 text-white rounded-lg flex items-center justify-center font-black text-xs">#{i+1}</div>
+                                <div className="w-8 h-8 bg-green-500 text-white rounded-lg flex items-center justify-center font-black text-xs">#{i + 1}</div>
                                 <span className="font-bold text-sm">{l.name}</span>
                               </div>
                               <span className="text-green-500 font-black text-xs">{l.count} livraisons</span>
@@ -1532,18 +1595,17 @@ export default function AdminDashboard() {
           </motion.div>
         </AnimatePresence>
 
-        {/* Livreur Modal */}
         <AnimatePresence>
           {isLivreurModalOpen && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 onClick={() => setIsLivreurModalOpen(false)}
                 className="absolute inset-0 bg-black/80 backdrop-blur-sm"
               />
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0, scale: 0.95, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -1552,47 +1614,47 @@ export default function AdminDashboard() {
                 <h2 className="text-3xl font-black tracking-tighter mb-8 uppercase">
                   {editingLivreur ? "MODIFIER LIVREUR" : "NOUVEAU LIVREUR"}
                 </h2>
-                
+
                 <form onSubmit={handleSaveLivreur} className="space-y-6">
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">NOM COMPLET</label>
-                      <input 
+                      <input
                         required
-                        type="text" 
+                        type="text"
                         value={livreurForm.full_name || ""}
-                        onChange={e => setLivreurForm({...livreurForm, full_name: e.target.value})}
+                        onChange={e => setLivreurForm({ ...livreurForm, full_name: e.target.value })}
                         className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
                         placeholder="Ex: Ahmed Benani"
                       />
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">TÉLÉPHONE / LOGIN</label>
-                      <input 
+                      <input
                         required
-                        type="tel" 
+                        type="tel"
                         value={livreurForm.phone || ""}
-                        onChange={e => setLivreurForm({...livreurForm, phone: e.target.value})}
+                        onChange={e => setLivreurForm({ ...livreurForm, phone: e.target.value })}
                         className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
                         placeholder="06..."
                       />
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">MOT DE PASSE</label>
-                      <input 
+                      <input
                         required
-                        type="text" 
+                        type="text"
                         value={livreurForm.password || ""}
-                        onChange={e => setLivreurForm({...livreurForm, password: e.target.value})}
+                        onChange={e => setLivreurForm({ ...livreurForm, password: e.target.value })}
                         className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
                         placeholder="••••••••"
                       />
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">STATUT INITIAL</label>
-                      <select 
+                      <select
                         value={livreurForm.status || "available"}
-                        onChange={e => setLivreurForm({...livreurForm, status: e.target.value as any})}
+                        onChange={e => setLivreurForm({ ...livreurForm, status: e.target.value as any })}
                         className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold appearance-none"
                       >
                         <option value="available">Disponible</option>
@@ -1602,14 +1664,14 @@ export default function AdminDashboard() {
                   </div>
 
                   <div className="flex gap-4 pt-4">
-                    <button 
+                    <button
                       type="button"
                       onClick={() => setIsLivreurModalOpen(false)}
                       className="flex-1 bg-white/5 text-white py-4 rounded-2xl font-black text-sm hover:bg-white/10 transition-colors"
                     >
                       ANNULER
                     </button>
-                    <button 
+                    <button
                       type="submit"
                       className="flex-1 bg-[#FFD000] text-black py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-[#FFD000]/20"
                     >
@@ -1622,18 +1684,20 @@ export default function AdminDashboard() {
           )}
         </AnimatePresence>
 
-        {/* Product Modal */}
         <AnimatePresence>
           {isProductModalOpen && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                onClick={() => setIsProductModalOpen(false)}
+                onClick={() => {
+                  setIsProductModalOpen(false);
+                  setProductImageFile(null);
+                }}
                 className="absolute inset-0 bg-black/80 backdrop-blur-sm"
               />
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0, scale: 0.95, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -1642,27 +1706,28 @@ export default function AdminDashboard() {
                 <h2 className="text-3xl font-black tracking-tighter mb-8 uppercase italic">
                   {editingProduct ? "MODIFIER PRODUIT" : "NOUVEAU PRODUIT"}
                 </h2>
-                
+
                 <form onSubmit={handleSaveProduct} className="space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-4">
                       <div className="space-y-2">
                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">NOM DU PRODUIT</label>
-                        <input 
+                        <input
                           required
-                          type="text" 
+                          type="text"
                           value={productForm.name || ""}
-                          onChange={e => setProductForm({...productForm, name: e.target.value})}
+                          onChange={e => setProductForm({ ...productForm, name: e.target.value })}
                           className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
                           placeholder="Ex: Tacos Mixte"
                         />
                       </div>
+
                       <div className="space-y-2">
                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">CATÉGORIE</label>
-                        <select 
+                        <select
                           required
                           value={productForm.category_id || ""}
-                          onChange={e => setProductForm({...productForm, category_id: e.target.value})}
+                          onChange={e => setProductForm({ ...productForm, category_id: e.target.value })}
                           className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold appearance-none"
                         >
                           <option value="" disabled>Sélectionner une catégorie</option>
@@ -1675,20 +1740,63 @@ export default function AdminDashboard() {
 
                     <div className="space-y-4">
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">URL DE L'IMAGE</label>
-                        <input 
-                          type="url" 
-                          value={productForm.image_url || ""}
-                          onChange={e => setProductForm({...productForm, image_url: e.target.value})}
-                          className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
-                          placeholder="https://images.unsplash.com/..."
-                        />
+                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">
+                          IMAGE DU PRODUIT
+                        </label>
+
+                        <label className="w-full min-h-[56px] bg-black border border-white/10 rounded-2xl px-6 py-4 flex items-center gap-3 cursor-pointer hover:border-[#FFD000] transition-all">
+                          {isUploadingImage ? (
+                            <Loader2 size={18} className="animate-spin text-[#FFD000]" />
+                          ) : (
+                            <ImagePlus size={18} className="text-[#FFD000]" />
+                          )}
+
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-sm text-white truncate">
+                              {productImageFile ? productImageFile.name : "Choisir une image depuis votre galerie"}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              PNG, JPG, WEBP...
+                            </p>
+                          </div>
+
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] || null;
+                              setProductImageFile(file);
+                            }}
+                          />
+                        </label>
+
+                        {(productImageFile || productForm.image_url) && (
+                          <div className="relative w-full h-[124px] rounded-2xl overflow-hidden border border-white/10 bg-black">
+                            <img
+                              src={productImageFile ? URL.createObjectURL(productImageFile) : productForm.image_url}
+                              alt="Prévisualisation"
+                              className="w-full h-full object-cover"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setProductImageFile(null);
+                                setProductForm({ ...productForm, image_url: "" });
+                              }}
+                              className="absolute top-3 right-3 bg-black/70 text-white px-3 py-1 rounded-xl text-xs font-black hover:bg-red-500 transition-colors"
+                            >
+                              SUPPRIMER
+                            </button>
+                          </div>
+                        )}
                       </div>
+
                       <div className="space-y-2">
                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">DESCRIPTION</label>
-                        <textarea 
+                        <textarea
                           value={productForm.description || ""}
-                          onChange={e => setProductForm({...productForm, description: e.target.value})}
+                          onChange={e => setProductForm({ ...productForm, description: e.target.value })}
                           className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold h-[124px] resize-none"
                           placeholder="Description du produit..."
                         />
@@ -1696,11 +1804,10 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {/* Size Management */}
                   <div className="space-y-4 pt-4 border-t border-white/5">
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">TAILLES ET PRIX</label>
-                      <button 
+                      <button
                         type="button"
                         onClick={() => setProductForm({
                           ...productForm,
@@ -1711,38 +1818,40 @@ export default function AdminDashboard() {
                         <Plus size={14} /> AJOUTER UNE TAILLE
                       </button>
                     </div>
-                    
+
                     <div className="space-y-3">
                       {productForm.sizes.map((size, index) => (
                         <div key={index} className="flex items-center gap-3 bg-black/40 p-4 rounded-2xl border border-white/5">
                           <div className="flex-1">
-                            <input 
+                            <input
                               required
                               type="text"
                               value={size.size_name}
                               onChange={e => {
                                 const newSizes = [...productForm.sizes];
                                 newSizes[index].size_name = e.target.value;
-                                setProductForm({...productForm, sizes: newSizes});
+                                setProductForm({ ...productForm, sizes: newSizes });
                               }}
                               placeholder="Nom (ex: XL, 33cl...)"
                               className="w-full bg-transparent border-none outline-none font-bold text-sm"
                             />
                           </div>
+
                           <div className="w-24">
-                            <input 
+                            <input
                               required
                               type="number"
                               value={size.price}
                               onChange={e => {
                                 const newSizes = [...productForm.sizes];
                                 newSizes[index].price = parseFloat(e.target.value) || 0;
-                                setProductForm({...productForm, sizes: newSizes});
+                                setProductForm({ ...productForm, sizes: newSizes });
                               }}
                               placeholder="Prix"
                               className="w-full bg-transparent border-none outline-none font-black text-sm text-[#FFD000]"
                             />
                           </div>
+
                           <div className="flex items-center gap-2">
                             <button
                               type="button"
@@ -1751,7 +1860,7 @@ export default function AdminDashboard() {
                                   ...s,
                                   is_default: i === index
                                 }));
-                                setProductForm({...productForm, sizes: newSizes});
+                                setProductForm({ ...productForm, sizes: newSizes });
                               }}
                               className={cn(
                                 "p-2 rounded-lg transition-all",
@@ -1761,11 +1870,12 @@ export default function AdminDashboard() {
                             >
                               <CheckCircle2 size={16} />
                             </button>
+
                             <button
                               type="button"
                               onClick={() => {
                                 const newSizes = productForm.sizes.filter((_, i) => i !== index);
-                                setProductForm({...productForm, sizes: newSizes});
+                                setProductForm({ ...productForm, sizes: newSizes });
                               }}
                               className="p-2 bg-white/5 text-gray-500 hover:text-red-500 rounded-lg transition-all"
                             >
@@ -1778,29 +1888,36 @@ export default function AdminDashboard() {
                   </div>
 
                   <div className="flex items-center gap-4 ml-4">
-                    <input 
-                      type="checkbox" 
+                    <input
+                      type="checkbox"
                       id="is_active"
                       checked={productForm.is_active}
-                      onChange={e => setProductForm({...productForm, is_active: e.target.checked})}
+                      onChange={e => setProductForm({ ...productForm, is_active: e.target.checked })}
                       className="w-5 h-5 accent-[#FFD000]"
                     />
-                    <label htmlFor="is_active" className="text-sm font-bold text-gray-400 cursor-pointer">Produit actif et visible sur le menu</label>
+                    <label htmlFor="is_active" className="text-sm font-bold text-gray-400 cursor-pointer">
+                      Produit actif et visible sur le menu
+                    </label>
                   </div>
 
                   <div className="flex gap-4 pt-4">
-                    <button 
+                    <button
                       type="button"
-                      onClick={() => setIsProductModalOpen(false)}
+                      onClick={() => {
+                        setIsProductModalOpen(false);
+                        setProductImageFile(null);
+                      }}
                       className="flex-1 bg-white/5 text-white py-4 rounded-2xl font-black text-sm hover:bg-white/10 transition-colors"
                     >
                       ANNULER
                     </button>
-                    <button 
+
+                    <button
                       type="submit"
-                      className="flex-1 bg-[#FFD000] text-black py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-[#FFD000]/20"
+                      disabled={isUploadingImage}
+                      className="flex-1 bg-[#FFD000] text-black py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-[#FFD000]/20 disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      ENREGISTRER
+                      {isUploadingImage ? "UPLOAD..." : "ENREGISTRER"}
                     </button>
                   </div>
                 </form>
@@ -1809,18 +1926,17 @@ export default function AdminDashboard() {
           )}
         </AnimatePresence>
 
-        {/* Delete Confirmation Modal */}
         <AnimatePresence>
           {isDeleteModalOpen && (
             <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 onClick={() => setIsDeleteModalOpen(false)}
                 className="absolute inset-0 bg-black/80 backdrop-blur-sm"
               />
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0, scale: 0.95, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -1829,7 +1945,7 @@ export default function AdminDashboard() {
                 <div className="w-20 h-20 bg-red-500/10 rounded-[32px] flex items-center justify-center text-red-500 mx-auto mb-6">
                   <Trash2 size={40} />
                 </div>
-                
+
                 <h2 className="text-2xl font-black tracking-tighter mb-2 uppercase italic">
                   Confirmation
                 </h2>
@@ -1837,15 +1953,15 @@ export default function AdminDashboard() {
                   Êtes-vous sûr de vouloir supprimer ce produit ?<br />
                   <span className="text-red-500/80 text-sm">Cette action est irréversible.</span>
                 </p>
-                
+
                 <div className="flex gap-4">
-                  <button 
+                  <button
                     onClick={() => setIsDeleteModalOpen(false)}
                     className="flex-1 bg-white/5 text-white py-4 rounded-2xl font-black text-sm hover:bg-white/10 transition-colors"
                   >
                     ANNULER
                   </button>
-                  <button 
+                  <button
                     onClick={confirmDeleteProduct}
                     className="flex-1 bg-red-500 text-white py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-red-500/20"
                   >
@@ -1856,18 +1972,18 @@ export default function AdminDashboard() {
             </div>
           )}
         </AnimatePresence>
-        {/* Category Modal */}
+
         <AnimatePresence>
           {isCategoryModalOpen && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 onClick={() => setIsCategoryModalOpen(false)}
                 className="absolute inset-0 bg-black/80 backdrop-blur-sm"
               />
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0, scale: 0.95, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -1876,56 +1992,70 @@ export default function AdminDashboard() {
                 <h2 className="text-3xl font-black tracking-tighter mb-8 uppercase italic">
                   {editingCategory ? "MODIFIER CATÉGORIE" : "NOUVELLE CATÉGORIE"}
                 </h2>
-                
+
                 <form onSubmit={handleSaveCategory} className="space-y-6">
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">NOM DE LA CATÉGORIE</label>
-                      <input 
+                      <input
                         required
-                        type="text" 
+                        type="text"
                         value={categoryForm.name || ""}
                         onChange={e => {
                           const name = e.target.value;
-                          const value = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-                          setCategoryForm({...categoryForm, name, value: editingCategory ? (categoryForm.value || "") : value});
+                          const value = name
+                            .toLowerCase()
+                            .normalize("NFD")
+                            .replace(/[\u0300-\u036f]/g, "")
+                            .replace(/\s+/g, '-')
+                            .replace(/[^a-z0-9-]/g, '');
+
+                          setCategoryForm({
+                            ...categoryForm,
+                            name,
+                            value: editingCategory ? (categoryForm.value || "") : value
+                          });
                         }}
                         className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold"
                         placeholder="Ex: Boissons"
                       />
                     </div>
+
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-4">VALEUR / SLUG (URL)</label>
-                      <input 
+                      <input
                         required
-                        type="text" 
+                        type="text"
                         value={categoryForm.value || ""}
-                        onChange={e => setCategoryForm({...categoryForm, value: e.target.value})}
+                        onChange={e => setCategoryForm({ ...categoryForm, value: e.target.value })}
                         className="w-full bg-black border border-white/10 rounded-2xl px-6 py-4 focus:border-[#FFD000] outline-none transition-all font-bold font-mono"
                         placeholder="Ex: boissons"
                       />
                     </div>
+
                     <div className="flex items-center gap-4 ml-4">
-                      <input 
-                        type="checkbox" 
+                      <input
+                        type="checkbox"
                         id="cat_is_active"
                         checked={categoryForm.is_active}
-                        onChange={e => setCategoryForm({...categoryForm, is_active: e.target.checked})}
+                        onChange={e => setCategoryForm({ ...categoryForm, is_active: e.target.checked })}
                         className="w-5 h-5 accent-[#FFD000]"
                       />
-                      <label htmlFor="cat_is_active" className="text-sm font-bold text-gray-400 cursor-pointer">Catégorie active</label>
+                      <label htmlFor="cat_is_active" className="text-sm font-bold text-gray-400 cursor-pointer">
+                        Catégorie active
+                      </label>
                     </div>
                   </div>
 
                   <div className="flex gap-4 pt-4">
-                    <button 
+                    <button
                       type="button"
                       onClick={() => setIsCategoryModalOpen(false)}
                       className="flex-1 bg-white/5 text-white py-4 rounded-2xl font-black text-sm hover:bg-white/10 transition-colors"
                     >
                       ANNULER
                     </button>
-                    <button 
+                    <button
                       type="submit"
                       className="flex-1 bg-[#FFD000] text-black py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-[#FFD000]/20"
                     >
@@ -1938,18 +2068,17 @@ export default function AdminDashboard() {
           )}
         </AnimatePresence>
 
-        {/* Category Delete Confirmation Modal */}
         <AnimatePresence>
           {isCategoryDeleteModalOpen && (
             <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 onClick={() => setIsCategoryDeleteModalOpen(false)}
                 className="absolute inset-0 bg-black/80 backdrop-blur-sm"
               />
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0, scale: 0.95, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -1958,7 +2087,7 @@ export default function AdminDashboard() {
                 <div className="w-20 h-20 bg-red-500/10 rounded-[32px] flex items-center justify-center text-red-500 mx-auto mb-6">
                   <Trash2 size={40} />
                 </div>
-                
+
                 <h2 className="text-2xl font-black tracking-tighter mb-2 uppercase italic">
                   Confirmation
                 </h2>
@@ -1966,15 +2095,15 @@ export default function AdminDashboard() {
                   Êtes-vous sûr de vouloir supprimer cette catégorie ?<br />
                   <span className="text-red-500/80 text-sm">Cette action est irréversible.</span>
                 </p>
-                
+
                 <div className="flex gap-4">
-                  <button 
+                  <button
                     onClick={() => setIsCategoryDeleteModalOpen(false)}
                     className="flex-1 bg-white/5 text-white py-4 rounded-2xl font-black text-sm hover:bg-white/10 transition-colors"
                   >
                     ANNULER
                   </button>
-                  <button 
+                  <button
                     onClick={confirmDeleteCategory}
                     className="flex-1 bg-red-500 text-white py-4 rounded-2xl font-black text-sm hover:scale-[1.02] transition-transform shadow-lg shadow-red-500/20"
                   >
@@ -1987,31 +2116,30 @@ export default function AdminDashboard() {
         </AnimatePresence>
       </main>
 
-      {/* Mobile Bottom Navigation */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-black border-t border-white/10 px-6 py-4 flex items-center justify-between z-50 backdrop-blur-lg bg-black/80">
-        <BottomNavLink 
-          active={activeTab === 'dashboard'} 
-          onClick={() => setActiveTab('dashboard')} 
-          icon={<LayoutDashboard size={20} />} 
-          label="Dash" 
+        <BottomNavLink
+          active={activeTab === 'dashboard'}
+          onClick={() => setActiveTab('dashboard')}
+          icon={<LayoutDashboard size={20} />}
+          label="Dash"
         />
-        <BottomNavLink 
-          active={activeTab === 'orders'} 
-          onClick={() => setActiveTab('orders')} 
-          icon={<ShoppingBag size={20} />} 
-          label="Orders" 
+        <BottomNavLink
+          active={activeTab === 'orders'}
+          onClick={() => setActiveTab('orders')}
+          icon={<ShoppingBag size={20} />}
+          label="Orders"
         />
-        <BottomNavLink 
-          active={activeTab === 'livreurs'} 
-          onClick={() => setActiveTab('livreurs')} 
-          icon={<Truck size={20} />} 
-          label="Livreurs" 
+        <BottomNavLink
+          active={activeTab === 'livreurs'}
+          onClick={() => setActiveTab('livreurs')}
+          icon={<Truck size={20} />}
+          label="Livreurs"
         />
-        <BottomNavLink 
-          active={activeTab === 'clients'} 
-          onClick={() => setActiveTab('clients')} 
-          icon={<Users size={20} />} 
-          label="Clients" 
+        <BottomNavLink
+          active={activeTab === 'clients'}
+          onClick={() => setActiveTab('clients')}
+          icon={<Users size={20} />}
+          label="Clients"
         />
       </nav>
     </div>
@@ -2020,7 +2148,7 @@ export default function AdminDashboard() {
 
 const SidebarLink: React.FC<{ active: boolean; onClick: () => void; icon: React.ReactNode; label: string }> = ({ active, onClick, icon, label }) => {
   return (
-    <button 
+    <button
       onClick={onClick}
       className={cn(
         "w-full flex items-center gap-3 px-4 py-4 rounded-2xl font-black text-sm transition-all",
@@ -2034,7 +2162,7 @@ const SidebarLink: React.FC<{ active: boolean; onClick: () => void; icon: React.
 
 const BottomNavLink: React.FC<{ active: boolean; onClick: () => void; icon: React.ReactNode; label: string }> = ({ active, onClick, icon, label }) => {
   return (
-    <button 
+    <button
       onClick={onClick}
       className={cn(
         "flex flex-col items-center gap-1 transition-all",
