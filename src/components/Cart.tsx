@@ -207,55 +207,118 @@ ${itemsText}
   };
 
   const handleCheckout = async () => {
-    if (!name || !phone || !location) {
-      alert("Veuillez remplir tous les champs et partager votre localisation.");
-      return;
-    }
+  if (!name || !phone || !location) {
+    alert("Veuillez remplir tous les champs et partager votre localisation.");
+    return;
+  }
 
-    if (items.length === 0) {
-      alert("Votre panier est vide.");
-      return;
-    }
+  if (items.length === 0) {
+    alert("Votre panier est vide.");
+    return;
+  }
 
-    if (subtotal < minOrder) {
-      alert(`Le montant minimum de commande est de ${minOrder} MAD.`);
-      return;
-    }
+  if (subtotal < minOrder) {
+    alert(`Le montant minimum de commande est de ${minOrder} MAD.`);
+    return;
+  }
 
-    if (!isOpen) {
-      alert(settings?.closed_message || "Le restaurant est actuellement fermé.");
-      return;
-    }
+  if (!isOpen) {
+    alert(settings?.closed_message || "Le restaurant est actuellement fermé.");
+    return;
+  }
 
-    if (paymentMethod === "online" && !selectedBank) {
-      alert("Veuillez sélectionner votre banque.");
-      return;
-    }
+  if (paymentMethod === "online" && !selectedBank) {
+    alert("Veuillez sélectionner votre banque.");
+    return;
+  }
 
-    setIsOrdering(true);
-    setError(null);
+  setIsOrdering(true);
+  setError(null);
 
-    try {
-      const { data: clientData, error: clientError } = await supabase
+  try {
+    const { data: clientData, error: clientError } = await supabase
+      .from("clients")
+      .select("id")
+      .eq("phone", phone)
+      .maybeSingle();
+
+    if (clientError) throw clientError;
+
+    let clientId = clientData?.id;
+
+    if (!clientId) {
+      const { data: newClient, error: createClientError } = await supabase
         .from("clients")
-        .select("id")
-        .eq("phone", phone)
-        .maybeSingle();
+        .insert([{ full_name: name, phone }])
+        .select()
+        .single();
 
-      if (clientError) throw clientError;
+      if (createClientError) throw createClientError;
+      clientId = newClient.id;
+    }
 
-      let clientId = clientData?.id;
+    const trackingCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
-      if (!clientId) {
-        const { data: newClient, error: createClientError } = await supabase
-          .from("clients")
-          .insert([{ full_name: name, phone }])
-          .select()
-          .single();
+    const { data: order, error: orderError } = await supabase
+      .from("orders")
+      .insert([
+        {
+          client_id: clientId,
+          customer_name: name,
+          customer_phone: phone,
+          latitude: location.lat,
+          longitude: location.lng,
+          total,
+          status: "pending",
+          tracking_code: trackingCode,
+          payment_method: paymentMethod,
+          payment_status: paymentMethod === "online" ? "pending" : "pending",
+          payment_bank: paymentMethod === "online" ? selectedBank : null
+        }
+      ])
+      .select()
+      .single();
 
-        if (createClientError) throw createClientError;
-        clientId = newClient.id;
-      }
+    if (orderError) throw orderError;
+
+    const orderItems = items.map((item) => ({
+      order_id: order.id,
+      product_id: item.product_id,
+      product_name: item.name,
+      size_name: item.size_name,
+      unit_price: item.price,
+      quantity: item.quantity,
+      subtotal: item.price * item.quantity,
+      item_type: item.item_type
+    }));
+
+    const { error: itemsError } = await supabase
+      .from("order_items")
+      .insert(orderItems);
+
+    if (itemsError) throw itemsError;
+
+    if (paymentMethod === "online") {
+      openWhatsApp();
+    }
+
+    setIsSuccess(true);
+    onClearCart();
+
+    setTimeout(() => {
+      setIsSuccess(false);
+      setIsModalOpen(false);
+      resetCheckoutState();
+      onClose();
+      navigate(`/tracking/${order.id}`);
+    }, 1500);
+  } catch (err: any) {
+    console.error("FULL ERROR OBJECT:", err);
+    setError(err.message || "Erreur inconnue");
+  } finally {
+    setIsOrdering(false);
+  }
+};
 
       const trackingCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
@@ -496,7 +559,11 @@ ${itemsText}
                     <Sparkles size={40} />
                   </div>
                   <h4 className="text-xl font-black">COMMANDE RÉUSSIE !</h4>
-                  <p className="text-gray-500">Redirection WhatsApp en cours...</p>
+                  <p className="text-gray-500">
+  {paymentMethod === "online"
+    ? "Redirection WhatsApp en cours..."
+    : "Votre commande a été enregistrée avec succès."}
+</p>
                 </div>
               ) : (
                 <>
