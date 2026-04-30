@@ -280,6 +280,8 @@ ${itemsText}
         .single();
 
       if (orderError) throw orderError;
+      const createdOrder = order;
+      console.log("Created order:", createdOrder);
 
       const orderItems = items.map((item) => ({
         order_id: order.id,
@@ -297,6 +299,26 @@ ${itemsText}
         .insert(orderItems);
 
       if (itemsError) throw itemsError;
+
+      // Create an admin notification entry without blocking checkout flow.
+      const { data: notificationData, error: notificationError } = await supabase
+        .from("notifications")
+        .insert([
+          {
+            title: "Nouvelle commande",
+            message: `Nouvelle commande reçue - Commande #${createdOrder.id}`,
+            type: "new_order",
+            is_read: false,
+            order_id: createdOrder.id
+          }
+        ])
+        .select();
+
+      console.log("Notification insert result:", notificationData, notificationError);
+
+      if (notificationError) {
+        console.error("Notification insert failed:", notificationError);
+      }
 
       if (paymentMethod === "online") {
         openWhatsApp();

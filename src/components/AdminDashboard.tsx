@@ -41,6 +41,19 @@ interface OrderWithItems extends Order {
   order_items: OrderItem[];
 }
 
+interface AdminNotification {
+  id: string;
+  title: string;
+  type: string;
+  orderId: string;
+  message: string;
+  createdAt: string;
+  customerName: string;
+  customerPhone: string;
+  total: number;
+  isRead: boolean;
+}
+
 type AdminTab = 'dashboard' | 'orders' | 'livreurs' | 'clients' | 'products' | 'categories' | 'analytics';
 
 export default function AdminDashboard() {
@@ -52,7 +65,9 @@ export default function AdminDashboard() {
   const [products, setProducts] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
-  const [notifications, setNotifications] = useState<OrderWithItems[]>([]);
+  const [notifications, setNotifications] = useState<AdminNotification[]>([]);
+  const [readNotificationIds, setReadNotificationIds] = useState<string[]>([]);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   const [isLivreurModalOpen, setIsLivreurModalOpen] = useState(false);
@@ -94,6 +109,92 @@ export default function AdminDashboard() {
   const [analyticsFilter, setAnalyticsFilter] = useState<'today' | '7days' | '30days'>('30days');
 
   const navigate = useNavigate();
+  const NOTIFICATION_STORAGE_KEY = "admin_read_notification_ids";
+  const unreadNotificationsCount = notifications.filter((notification) => !notification.isRead).length;
+
+  const createNotificationFromOrder = (
+    order: OrderWithItems,
+    alreadyReadIds: string[] = [],
+  ): AdminNotification => ({
+    id: order.id,
+    title: "Nouvelle commande",
+    type: "order",
+    orderId: order.id,
+    message: `Nouvelle commande reçue - Commande #${order.id}`,
+    createdAt: order.created_at,
+    customerName: order.customer_name,
+    customerPhone: order.customer_phone,
+    total: order.total,
+    isRead: alreadyReadIds.includes(order.id),
+  });
+
+  const markNotificationAsRead = (notificationId: string) => {
+    setNotifications((prev) =>
+      prev.map((notification) =>
+        notification.id === notificationId ? { ...notification, isRead: true } : notification,
+      ),
+    );
+
+    supabase
+      .from("notifications")
+      .update({ is_read: true })
+      .eq("id", notificationId)
+      .then(({ error }) => {
+        if (error) {
+          console.warn("Unable to persist notification read state:", error.message);
+        }
+      });
+
+    setReadNotificationIds((prev) => {
+      if (prev.includes(notificationId)) return prev;
+      const next = [...prev, notificationId];
+      localStorage.setItem(NOTIFICATION_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const removeNotificationFromLocalState = (notificationId: string) => {
+    setNotifications((prev) => prev.filter((notification) => notification.id !== notificationId));
+    setReadNotificationIds((prev) => {
+      const next = prev.filter((id) => id !== notificationId);
+      localStorage.setItem(NOTIFICATION_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const handleDeleteNotification = async (notificationId: string) => {
+    const { error } = await supabase
+      .from("notifications")
+      .delete()
+      .eq("id", notificationId);
+
+    if (error) {
+      console.error("Unable to delete notification from Supabase:", error.message);
+      return;
+    }
+
+    removeNotificationFromLocalState(notificationId);
+  };
+
+  const handleDeleteAllNotifications = async () => {
+    const confirmed = window.confirm("Voulez-vous vraiment supprimer toutes les notifications ?");
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("notifications")
+      .delete()
+      .not("id", "is", null);
+
+    if (error) {
+      console.error("Unable to delete all notifications from Supabase:", error.message);
+      return;
+    }
+
+    setNotifications([]);
+    setReadNotificationIds([]);
+    localStorage.setItem(NOTIFICATION_STORAGE_KEY, JSON.stringify([]));
+    setIsNotificationsOpen(false);
+  };
 
   useEffect(() => {
     const token = localStorage.getItem("admin_token");
@@ -102,22 +203,46 @@ export default function AdminDashboard() {
       return;
     }
 
+    const storedReadIdsRaw = localStorage.getItem(NOTIFICATION_STORAGE_KEY);
+    const storedReadIds = storedReadIdsRaw ? JSON.parse(storedReadIdsRaw) : [];
+    const safeStoredReadIds = Array.isArray(storedReadIds) ? storedReadIds : [];
+    setReadNotificationIds(safeStoredReadIds);
+
     fetchData();
 
     const subscription = supabase
-      .channel('admin_orders')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, async (payload) => {
-        const newOrder = payload.new as Order;
+      .channel('admin_notifications')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, async (payload) => {
+        const newNotification = payload.new as any;
+        let order: OrderWithItems | null = null;
 
-        const { data: items } = await supabase
-          .from('order_items')
-          .select('*')
-          .eq('order_id', newOrder.id);
+        if (newNotification.order_id) {
+          const { data: orderData, error: orderError } = await supabase
+            .from("orders")
+            .select("*, order_items(*)")
+            .eq("id", newNotification.order_id)
+            .single();
 
-        const orderWithItems = { ...newOrder, order_items: items || [] } as OrderWithItems;
+          if (!orderError && orderData) {
+            order = orderData as OrderWithItems;
+            setOrders((prev) => [order as OrderWithItems, ...prev.filter((o) => o.id !== order!.id)]);
+          }
+        }
 
-        setOrders(prev => [orderWithItems, ...prev]);
-        setNotifications(prev => [orderWithItems, ...prev]);
+        const mappedNotification: AdminNotification = {
+          id: newNotification.id,
+          title: newNotification.title || "Nouvelle commande",
+          message: newNotification.message || "Nouvelle notification",
+          type: newNotification.type || "new_order",
+          isRead: Boolean(newNotification.is_read),
+          orderId: newNotification.order_id || "",
+          createdAt: newNotification.created_at,
+          customerName: order?.customer_name || "Client",
+          customerPhone: order?.customer_phone || "-",
+          total: order?.total || 0,
+        };
+
+        setNotifications((prev) => [mappedNotification, ...prev.filter((n) => n.id !== mappedNotification.id)].slice(0, 20));
 
         const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
         audio.play().catch(() => {});
@@ -267,19 +392,18 @@ export default function AdminDashboard() {
   };
 
   useEffect(() => {
-    if (orders.length > 0) {
-      setAnalytics(calculateAnalytics(orders, clients, livreurs, analyticsFilter));
-    }
+    setAnalytics(calculateAnalytics(orders, clients, livreurs, analyticsFilter));
   }, [orders, clients, livreurs, analyticsFilter]);
 
   const fetchData = async () => {
     try {
-      const [ordersRes, livreursRes, clientsRes, productsRes, categoriesRes] = await Promise.all([
+      const [ordersRes, livreursRes, clientsRes, productsRes, categoriesRes, notificationsRes] = await Promise.all([
         supabase.from('orders').select('*, order_items(*)').order('created_at', { ascending: false }),
         supabase.from('livreurs').select('*').order('created_at', { ascending: false }),
         supabase.from('clients').select('*').order('created_at', { ascending: false }),
         supabase.from('products').select('*, sizes:product_sizes(*)').order('created_at', { ascending: false }),
-        supabase.from('categories').select('*').order('created_at', { ascending: false })
+        supabase.from('categories').select('*').order('created_at', { ascending: false }),
+        supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(20)
       ]);
 
       if (ordersRes.error) throw ordersRes.error;
@@ -288,11 +412,36 @@ export default function AdminDashboard() {
       if (productsRes.error) throw productsRes.error;
       if (categoriesRes.error) throw categoriesRes.error;
 
-      setOrders((ordersRes.data as OrderWithItems[]) || []);
+      const fetchedOrders = (ordersRes.data as OrderWithItems[]) || [];
+      setOrders(fetchedOrders);
       setLivreurs((livreursRes.data as Livreur[]) || []);
       setClients((clientsRes.data as Client[]) || []);
       setProducts((productsRes.data as MenuItem[]) || []);
       setCategories((categoriesRes.data as Category[]) || []);
+      if (!notificationsRes.error && notificationsRes.data) {
+        const notificationsFromDb: AdminNotification[] = notificationsRes.data.map((notification: any) => {
+          const order = fetchedOrders.find((item) => item.id === notification.order_id);
+          return {
+            id: notification.id,
+            title: notification.title || "Notification",
+            type: notification.type || "order",
+            orderId: notification.order_id || "",
+            message: notification.message || "Nouvelle notification",
+            createdAt: notification.created_at,
+            customerName: order?.customer_name || "Client",
+            customerPhone: order?.customer_phone || "-",
+            total: order?.total || 0,
+            isRead: Boolean(notification.is_read),
+          };
+        });
+
+        setNotifications(notificationsFromDb);
+      } else {
+        if (notificationsRes.error) {
+          console.error("Unable to fetch notifications from Supabase:", notificationsRes.error.message);
+        }
+        setNotifications([]);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -379,6 +528,48 @@ export default function AdminDashboard() {
     });
 
     doc.save(`fquick_orders_${format(new Date(), "yyyy-MM-dd")}.pdf`);
+  };
+
+  const handleResetDashboard = async () => {
+    const confirmed = window.confirm("Voulez-vous vraiment tout réinitialiser ?");
+    if (!confirmed) return;
+
+    setOrders([]);
+    setClients([]);
+    setNotifications([]);
+    setReadNotificationIds([]);
+    localStorage.setItem(NOTIFICATION_STORAGE_KEY, JSON.stringify([]));
+    setAnalytics(calculateAnalytics([], [], livreurs, analyticsFilter));
+    setIsNotificationsOpen(false);
+
+    try {
+      const { error: orderItemsError } = await supabase
+        .from("order_items")
+        .delete()
+        .not("id", "is", null);
+      if (orderItemsError) throw orderItemsError;
+
+      const { error: ordersError } = await supabase
+        .from("orders")
+        .delete()
+        .not("id", "is", null);
+      if (ordersError) throw ordersError;
+
+      const { error: notificationsError } = await supabase
+        .from("notifications")
+        .delete()
+        .not("id", "is", null);
+      if (notificationsError) throw notificationsError;
+
+      const { error: clientsError } = await supabase
+        .from("clients")
+        .delete()
+        .not("id", "is", null);
+      if (clientsError) throw clientsError;
+    } catch (error) {
+      console.error("Dashboard reset failed:", error);
+      fetchData();
+    }
   };
 
   const handleSaveLivreur = async (e: React.FormEvent) => {
@@ -756,12 +947,66 @@ export default function AdminDashboard() {
 
         <div className="flex items-center gap-3">
           <div className="relative">
-            <button className="p-2 bg-white/5 border border-white/10 rounded-lg text-white relative">
-              <Bell size={20} />
-              {notifications.length > 0 && (
-                <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-black" />
+              <button
+                onClick={() => setIsNotificationsOpen((prev) => !prev)}
+                className="p-2 bg-white/5 border border-white/10 rounded-lg text-white relative"
+              >
+                <Bell size={20} />
+                {unreadNotificationsCount > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-red-500 rounded-full border-2 border-black text-[10px] font-black text-white flex items-center justify-center">
+                    {unreadNotificationsCount}
+                  </span>
+                )}
+              </button>
+              {isNotificationsOpen && (
+                <div className="absolute right-0 mt-2 w-80 bg-black border border-white/10 rounded-2xl shadow-2xl z-[80] max-h-96 overflow-y-auto">
+                  <div className="p-3 border-b border-white/10 text-[10px] font-black tracking-widest text-gray-500">
+                    NOTIFICATIONS
+                  </div>
+                  <div className="p-2 space-y-2">
+                    {notifications.length === 0 && (
+                      <p className="text-xs text-gray-500 font-bold p-2">Aucune notification</p>
+                    )}
+                    {notifications.map((notification) => (
+                      <div
+                        key={notification.id}
+                        className={cn(
+                          "w-full p-3 rounded-xl border transition-all",
+                          notification.isRead
+                            ? "bg-white/5 border-white/10 text-gray-400"
+                            : "bg-[#FFD000]/10 border-[#FFD000]/40 text-white",
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <button
+                            onClick={() => {
+                              markNotificationAsRead(notification.id);
+                              setIsNotificationsOpen(false);
+                              setActiveTab("orders");
+                            }}
+                            className="flex-1 text-left"
+                          >
+                            <p className="text-[10px] font-black uppercase tracking-widest opacity-70">
+                              {notification.title}
+                            </p>
+                            <p className="text-xs font-black mt-1">{notification.message}</p>
+                            <p className="text-[10px] font-bold opacity-70 mt-1">
+                              {format(new Date(notification.createdAt), "dd/MM/yyyy HH:mm")}
+                            </p>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteNotification(notification.id)}
+                            className="p-1.5 rounded-lg bg-white/10 hover:bg-red-500/20 hover:text-red-400 transition-all"
+                            aria-label="Supprimer notification"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
-            </button>
           </div>
           <button
             onClick={handleLogout}
@@ -850,20 +1095,82 @@ export default function AdminDashboard() {
 
           <div className="flex items-center gap-4">
             {activeTab === 'dashboard' && (
-              <button
-                onClick={exportToPDF}
-                className="flex items-center gap-2 bg-[#FFD000] text-black hover:opacity-90 px-6 py-3 rounded-xl font-bold transition-all"
-              >
-                <FileText size={18} /> Exporter PDF
-              </button>
+              <>
+                <button
+                  onClick={handleResetDashboard}
+                  className="flex items-center gap-2 bg-white/5 border border-white/10 hover:border-red-500/40 hover:text-red-400 px-6 py-3 rounded-xl font-bold transition-all"
+                >
+                  Réinitialiser
+                </button>
+                <button
+                  onClick={exportToPDF}
+                  className="flex items-center gap-2 bg-[#FFD000] text-black hover:opacity-90 px-6 py-3 rounded-xl font-bold transition-all"
+                >
+                  <FileText size={18} /> Exporter PDF
+                </button>
+              </>
             )}
             <div className="relative">
-              <button className="p-3 bg-white/5 border border-white/10 rounded-xl text-white relative">
+              <button
+                onClick={() => setIsNotificationsOpen((prev) => !prev)}
+                className="p-3 bg-white/5 border border-white/10 rounded-xl text-white relative"
+              >
                 <Bell size={20} />
-                {notifications.length > 0 && (
-                  <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-black" />
+                {unreadNotificationsCount > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[20px] h-[20px] px-1 bg-red-500 rounded-full border-2 border-black text-[10px] font-black text-white flex items-center justify-center">
+                    {unreadNotificationsCount}
+                  </span>
                 )}
               </button>
+              {isNotificationsOpen && (
+                <div className="absolute right-0 mt-2 w-96 bg-black border border-white/10 rounded-2xl shadow-2xl z-[80] max-h-96 overflow-y-auto">
+                  <div className="p-3 border-b border-white/10 text-[10px] font-black tracking-widest text-gray-500">
+                    NOTIFICATIONS
+                  </div>
+                  <div className="p-2 space-y-2">
+                    {notifications.length === 0 && (
+                      <p className="text-xs text-gray-500 font-bold p-2">Aucune notification</p>
+                    )}
+                    {notifications.map((notification) => (
+                      <div
+                        key={notification.id}
+                        className={cn(
+                          "w-full p-3 rounded-xl border transition-all",
+                          notification.isRead
+                            ? "bg-white/5 border-white/10 text-gray-400"
+                            : "bg-[#FFD000]/10 border-[#FFD000]/40 text-white",
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <button
+                            onClick={() => {
+                              markNotificationAsRead(notification.id);
+                              setIsNotificationsOpen(false);
+                              setActiveTab("orders");
+                            }}
+                            className="flex-1 text-left"
+                          >
+                            <p className="text-[10px] font-black uppercase tracking-widest opacity-70">
+                              {notification.title}
+                            </p>
+                            <p className="text-xs font-black mt-1">{notification.message}</p>
+                            <p className="text-[10px] font-bold opacity-70 mt-1">
+                              {format(new Date(notification.createdAt), "dd/MM/yyyy HH:mm")}
+                            </p>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteNotification(notification.id)}
+                            className="p-1.5 rounded-lg bg-white/10 hover:bg-red-500/20 hover:text-red-400 transition-all"
+                            aria-label="Supprimer notification"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </header>
@@ -879,12 +1186,20 @@ export default function AdminDashboard() {
             {activeTab === 'analytics' && "ANALYSES"}
           </h1>
           {activeTab === 'dashboard' && (
-            <button
-              onClick={exportToPDF}
-              className="mt-4 w-full flex items-center justify-center gap-2 bg-[#FFD000] text-black py-4 rounded-2xl font-black text-sm transition-all"
-            >
-              <FileText size={18} /> EXPORTER RAPPORT PDF
-            </button>
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                onClick={handleResetDashboard}
+                className="w-full flex items-center justify-center gap-2 bg-white/5 border border-white/10 hover:border-red-500/40 hover:text-red-400 py-4 rounded-2xl font-black text-sm transition-all"
+              >
+                RÉINITIALISER
+              </button>
+              <button
+                onClick={exportToPDF}
+                className="w-full flex items-center justify-center gap-2 bg-[#FFD000] text-black py-4 rounded-2xl font-black text-sm transition-all"
+              >
+                <FileText size={18} /> EXPORTER RAPPORT PDF
+              </button>
+            </div>
           )}
         </div>
 
@@ -924,22 +1239,55 @@ export default function AdminDashboard() {
                 <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 lg:gap-12">
                   <div className="xl:col-span-2">
                     <section>
-                      <h2 className="text-2xl font-black tracking-tighter mb-6">NOTIFICATIONS RÉCENTES</h2>
+                      <div className="flex items-center justify-between gap-4 mb-6">
+                        <h2 className="text-2xl font-black tracking-tighter">NOTIFICATIONS RÉCENTES</h2>
+                        {notifications.length > 0 && (
+                          <button
+                            onClick={handleDeleteAllNotifications}
+                            className="text-xs font-black uppercase tracking-widest text-red-400 hover:text-red-300 transition-colors"
+                          >
+                            Supprimer tout
+                          </button>
+                        )}
+                      </div>
                       <div className="space-y-4">
-                        {notifications.map(notif => (
-                          <div key={notif.id} className="bg-[#FFD000] text-black rounded-[32px] p-6 lg:p-8 shadow-lg shadow-[#FFD000]/10">
-                            <div className="flex items-start justify-between mb-4">
+                        {notifications.map((notif) => (
+                          <div
+                            key={notif.id}
+                            className={cn(
+                              "rounded-[32px] p-6 lg:p-8 shadow-lg",
+                              notif.isRead
+                                ? "bg-white/5 text-white border border-white/10"
+                                : "bg-[#FFD000] text-black shadow-[#FFD000]/10",
+                            )}
+                          >
+                            <div className="flex items-start justify-between mb-4 gap-4">
                               <div className="font-black text-[10px] flex items-center gap-2 tracking-widest uppercase opacity-80">
                                 <Bell size={14} /> NOUVELLE COMMANDE
                               </div>
-                              <span className="text-[10px] font-black opacity-50">MAINTENANT</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-black opacity-50">
+                                  {format(new Date(notif.createdAt), "HH:mm")}
+                                </span>
+                                <button
+                                  onClick={() => handleDeleteNotification(notif.id)}
+                                  className="p-1.5 rounded-lg bg-black/10 hover:bg-red-500/20 hover:text-red-500 transition-all"
+                                  aria-label="Supprimer notification"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
                             </div>
-                            <p className="text-2xl font-black tracking-tighter mb-1">{notif.customer_name}</p>
-                            <p className="text-sm font-bold opacity-80 mb-4">{notif.customer_phone}</p>
+                            <p className="text-lg font-black tracking-tight mb-2">{notif.message}</p>
+                            <p className="text-2xl font-black tracking-tighter mb-1">{notif.customerName}</p>
+                            <p className="text-sm font-bold opacity-80 mb-4">{notif.customerPhone}</p>
                             <div className="flex items-center justify-between pt-4 border-t border-white/20">
                               <span className="text-xl font-black">{notif.total} MAD</span>
                               <button
-                                onClick={() => setActiveTab('orders')}
+                                onClick={() => {
+                                  markNotificationAsRead(notif.id);
+                                  setActiveTab('orders');
+                                }}
                                 className="bg-white text-[#FFD000] px-4 py-2 rounded-xl text-xs font-black hover:scale-105 transition-transform"
                               >
                                 VOIR DÉTAILS
