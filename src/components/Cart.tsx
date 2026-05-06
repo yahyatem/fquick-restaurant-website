@@ -59,12 +59,35 @@ function haversineKm(
 }
 
 /** Distance-based delivery (MAD) per project spec */
-function deliveryFeeFromDistanceKm(d: number): number {
-  if (d <= 2) return 10;
-  if (d <= 3.5) return 12;
-  if (d <= 4.9) return 15;
-  if (d <= 6) return 20;
-  return 25;
+function deliveryFeeFromDistanceKm(
+  d: number,
+  pricing: {
+    fee_0_2: number;
+    fee_2_3_5: number;
+    fee_3_5_4_9: number;
+    fee_5_6: number;
+    fee_gt_6: number;
+  }
+): number {
+  if (d <= 2) return pricing.fee_0_2;
+  if (d <= 3.5) return pricing.fee_2_3_5;
+  if (d <= 4.9) return pricing.fee_3_5_4_9;
+  if (d <= 6) return pricing.fee_5_6;
+  return pricing.fee_gt_6;
+}
+
+const getDeliveryPricing = (settings: any) => ({
+  fee_0_2: Number(settings?.delivery_fee_0_2 ?? 10),
+  fee_2_3_5: Number(settings?.delivery_fee_2_3_5 ?? 12),
+  fee_3_5_4_9: Number(settings?.delivery_fee_3_5_4_9 ?? 15),
+  fee_5_6: Number(settings?.delivery_fee_5_6 ?? 20),
+  fee_gt_6: Number(settings?.delivery_fee_gt_6 ?? 25)
+});
+
+function getDefaultDeliveryFee(settings: any): number {
+  const pricing = getDeliveryPricing(settings);
+  // Default to first band when no distance is available yet.
+  return pricing.fee_0_2;
 }
 
 const MOROCCAN_BANKS = [
@@ -128,7 +151,7 @@ export default function Cart({
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash_on_delivery");
   const [selectedBank, setSelectedBank] = useState("");
 
-  const settingsDeliveryFallback = settings?.delivery_fee ?? 0;
+  const settingsDeliveryFallback = getDefaultDeliveryFee(settings);
   const deliveryFee =
     calculatedDeliveryFee !== null ? calculatedDeliveryFee : settingsDeliveryFallback;
   const minOrder = settings?.min_order || 0;
@@ -156,7 +179,7 @@ export default function Cart({
   const applyCoordsAndFee = (lat: number, lng: number) => {
     const { lat: rLat, lng: rLng } = getRestaurantCoords();
     const km = haversineKm(rLat, rLng, lat, lng);
-    const fee = deliveryFeeFromDistanceKm(km);
+    const fee = deliveryFeeFromDistanceKm(km, getDeliveryPricing(settings));
     setLocation({ lat, lng });
     setDeliveryDistanceKm(km);
     setCalculatedDeliveryFee(fee);

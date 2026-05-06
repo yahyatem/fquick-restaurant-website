@@ -22,7 +22,8 @@ import {
   Layers,
   BarChart3,
   ImagePlus,
-  Loader2
+  Loader2,
+  Settings as SettingsIcon
 } from "lucide-react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -54,7 +55,7 @@ interface AdminNotification {
   isRead: boolean;
 }
 
-type AdminTab = 'dashboard' | 'orders' | 'livreurs' | 'clients' | 'products' | 'categories' | 'analytics';
+type AdminTab = 'dashboard' | 'orders' | 'livreurs' | 'clients' | 'products' | 'categories' | 'analytics' | 'settings';
 
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
@@ -107,6 +108,23 @@ export default function AdminDashboard() {
   const [orderFilter, setOrderFilter] = useState<Order['status'] | 'all'>('all');
   const [livreurFilter, setLivreurFilter] = useState<string>('all');
   const [analyticsFilter, setAnalyticsFilter] = useState<'today' | '7days' | '30days'>('30days');
+  const [storedAdminPassword, setStoredAdminPassword] = useState("adminFquik@3");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [isSavingPassword, setIsSavingPassword] = useState(false);
+  const [deliveryPricing, setDeliveryPricing] = useState({
+    fee_0_2: 10,
+    fee_2_3_5: 12,
+    fee_3_5_4_9: 15,
+    fee_5_6: 20,
+    fee_gt_6: 25
+  });
+  const [deliveryPricingMessage, setDeliveryPricingMessage] = useState<string | null>(null);
+  const [deliveryPricingError, setDeliveryPricingError] = useState<string | null>(null);
+  const [isSavingDeliveryPricing, setIsSavingDeliveryPricing] = useState(false);
 
   const navigate = useNavigate();
   const NOTIFICATION_STORAGE_KEY = "admin_read_notification_ids";
@@ -397,13 +415,14 @@ export default function AdminDashboard() {
 
   const fetchData = async () => {
     try {
-      const [ordersRes, livreursRes, clientsRes, productsRes, categoriesRes, notificationsRes] = await Promise.all([
+      const [ordersRes, livreursRes, clientsRes, productsRes, categoriesRes, notificationsRes, settingsRes] = await Promise.all([
         supabase.from('orders').select('*, order_items(*)').order('created_at', { ascending: false }),
         supabase.from('livreurs').select('*').order('created_at', { ascending: false }),
         supabase.from('clients').select('*').order('created_at', { ascending: false }),
         supabase.from('products').select('*, sizes:product_sizes(*)').order('created_at', { ascending: false }),
         supabase.from('categories').select('*').order('created_at', { ascending: false }),
-        supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(20)
+        supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(20),
+        supabase.from('settings').select('key, value')
       ]);
 
       if (ordersRes.error) throw ordersRes.error;
@@ -418,6 +437,17 @@ export default function AdminDashboard() {
       setClients((clientsRes.data as Client[]) || []);
       setProducts((productsRes.data as MenuItem[]) || []);
       setCategories((categoriesRes.data as Category[]) || []);
+      if (!settingsRes.error && settingsRes.data) {
+        const settingsMap = new Map(settingsRes.data.map((s: any) => [s.key, s.value]));
+        setStoredAdminPassword(settingsMap.get("admin_password") || "adminFquik@3");
+        setDeliveryPricing({
+          fee_0_2: Number(settingsMap.get("delivery_fee_0_2") ?? 10),
+          fee_2_3_5: Number(settingsMap.get("delivery_fee_2_3_5") ?? 12),
+          fee_3_5_4_9: Number(settingsMap.get("delivery_fee_3_5_4_9") ?? 15),
+          fee_5_6: Number(settingsMap.get("delivery_fee_5_6") ?? 20),
+          fee_gt_6: Number(settingsMap.get("delivery_fee_gt_6") ?? 25)
+        });
+      }
       if (!notificationsRes.error && notificationsRes.data) {
         const notificationsFromDb: AdminNotification[] = notificationsRes.data.map((notification: any) => {
           const order = fetchedOrders.find((item) => item.id === notification.order_id);
@@ -852,6 +882,86 @@ export default function AdminDashboard() {
     }
   };
 
+  const upsertSetting = async (key: string, value: any) => {
+    const { data: existing, error: existingError } = await supabase
+      .from("settings")
+      .select("id")
+      .eq("key", key)
+      .maybeSingle();
+
+    if (existingError) throw existingError;
+
+    if (existing?.id) {
+      const { error } = await supabase
+        .from("settings")
+        .update({ value })
+        .eq("id", existing.id);
+      if (error) throw error;
+      return;
+    }
+
+    const { error } = await supabase
+      .from("settings")
+      .insert([{ key, value }]);
+    if (error) throw error;
+  };
+
+  const handleUpdateAdminPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordMessage(null);
+    setPasswordError(null);
+
+    if (currentPassword !== storedAdminPassword) {
+      setPasswordError("Mot de passe actuel incorrect.");
+      return;
+    }
+    if (!newPassword || newPassword.length < 6) {
+      setPasswordError("Le nouveau mot de passe doit contenir au moins 6 caractères.");
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setPasswordError("La confirmation du nouveau mot de passe ne correspond pas.");
+      return;
+    }
+
+    setIsSavingPassword(true);
+    try {
+      await upsertSetting("admin_password", newPassword);
+      setStoredAdminPassword(newPassword);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmNewPassword("");
+      setPasswordMessage("Mot de passe admin mis à jour avec succès.");
+    } catch (err) {
+      console.error("Failed to update admin password:", err);
+      setPasswordError("Erreur lors de la mise à jour du mot de passe.");
+    } finally {
+      setIsSavingPassword(false);
+    }
+  };
+
+  const handleSaveDeliveryPricing = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDeliveryPricingMessage(null);
+    setDeliveryPricingError(null);
+    setIsSavingDeliveryPricing(true);
+    try {
+      await Promise.all([
+        upsertSetting("delivery_fee_0_2", Number(deliveryPricing.fee_0_2)),
+        upsertSetting("delivery_fee_2_3_5", Number(deliveryPricing.fee_2_3_5)),
+        upsertSetting("delivery_fee_3_5_4_9", Number(deliveryPricing.fee_3_5_4_9)),
+        upsertSetting("delivery_fee_5_6", Number(deliveryPricing.fee_5_6)),
+        upsertSetting("delivery_fee_gt_6", Number(deliveryPricing.fee_gt_6))
+      ]);
+      setDeliveryPricingMessage("Tarifs de livraison enregistrés.");
+    } catch (err) {
+      console.error("Failed to save delivery pricing:", err);
+      setDeliveryPricingError("Erreur lors de l'enregistrement des tarifs.");
+    } finally {
+      setIsSavingDeliveryPricing(false);
+    }
+  };
+
   const handleLogout = (isExpired = false) => {
     localStorage.removeItem("admin_token");
     if (isExpired) {
@@ -907,6 +1017,7 @@ export default function AdminDashboard() {
     { id: 'products', label: 'Produits', icon: <Package size={20} /> },
     { id: 'categories', label: 'Catégories', icon: <Layers size={20} /> },
     { id: 'analytics', label: 'Analyses', icon: <BarChart3 size={20} /> },
+    { id: 'settings', label: 'Paramètres', icon: <SettingsIcon size={20} /> },
   ];
 
   return (
@@ -1081,6 +1192,7 @@ export default function AdminDashboard() {
               {activeTab === 'products' && "GESTION PRODUITS"}
               {activeTab === 'categories' && "GESTION CATÉGORIES"}
               {activeTab === 'analytics' && "ANALYSES & RAPPORTS"}
+              {activeTab === 'settings' && "PARAMÈTRES"}
             </h1>
             <p className="text-gray-500 font-medium">
               {activeTab === 'dashboard' && "Bienvenue, voici l'état de votre restaurant aujourd'hui."}
@@ -1090,6 +1202,7 @@ export default function AdminDashboard() {
               {activeTab === 'products' && "Gérez votre catalogue de produits."}
               {activeTab === 'categories' && "Organisez vos produits par catégories."}
               {activeTab === 'analytics' && "Visualisez vos performances commerciales."}
+              {activeTab === 'settings' && "Configurez le mot de passe admin et les tarifs de livraison."}
             </p>
           </div>
 
@@ -1184,6 +1297,7 @@ export default function AdminDashboard() {
             {activeTab === 'products' && "PRODUITS"}
             {activeTab === 'categories' && "CATÉGORIES"}
             {activeTab === 'analytics' && "ANALYSES"}
+            {activeTab === 'settings' && "PARAMÈTRES"}
           </h1>
           {activeTab === 'dashboard' && (
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1938,6 +2052,105 @@ export default function AdminDashboard() {
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {activeTab === 'settings' && (
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+                <section className="bg-white/5 border border-white/10 rounded-[32px] p-8">
+                  <h2 className="text-2xl font-black tracking-tighter mb-6">MOT DE PASSE ADMIN</h2>
+                  <form onSubmit={handleUpdateAdminPassword} className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">
+                        MOT DE PASSE ACTUEL
+                      </label>
+                      <input
+                        type="password"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 focus:border-[#FFD000] outline-none transition-all font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">
+                        NOUVEAU MOT DE PASSE
+                      </label>
+                      <input
+                        type="password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 focus:border-[#FFD000] outline-none transition-all font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">
+                        CONFIRMER LE NOUVEAU MOT DE PASSE
+                      </label>
+                      <input
+                        type="password"
+                        value={confirmNewPassword}
+                        onChange={(e) => setConfirmNewPassword(e.target.value)}
+                        className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 focus:border-[#FFD000] outline-none transition-all font-bold"
+                      />
+                    </div>
+                    {passwordError && (
+                      <p className="text-red-500 text-xs font-bold">{passwordError}</p>
+                    )}
+                    {passwordMessage && (
+                      <p className="text-green-500 text-xs font-bold">{passwordMessage}</p>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={isSavingPassword}
+                      className="w-full bg-[#FFD000] text-black py-3 rounded-xl font-black hover:opacity-90 transition-all disabled:opacity-60"
+                    >
+                      {isSavingPassword ? "ENREGISTREMENT..." : "METTRE À JOUR LE MOT DE PASSE"}
+                    </button>
+                  </form>
+                </section>
+
+                <section className="bg-white/5 border border-white/10 rounded-[32px] p-8">
+                  <h2 className="text-2xl font-black tracking-tighter mb-6">TARIFS LIVRAISON</h2>
+                  <form onSubmit={handleSaveDeliveryPricing} className="space-y-4">
+                    {[
+                      { key: "fee_0_2", label: "0 à 2 km" },
+                      { key: "fee_2_3_5", label: "2 à 3.5 km" },
+                      { key: "fee_3_5_4_9", label: "3.5 à 4.9 km" },
+                      { key: "fee_5_6", label: "5 à 6 km" },
+                      { key: "fee_gt_6", label: "> 6 km" }
+                    ].map((item) => (
+                      <div key={item.key} className="flex items-center gap-3">
+                        <label className="w-32 text-xs font-black text-gray-400">{item.label}</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={(deliveryPricing as any)[item.key]}
+                          onChange={(e) =>
+                            setDeliveryPricing((prev) => ({
+                              ...prev,
+                              [item.key]: Number(e.target.value)
+                            }))
+                          }
+                          className="flex-1 bg-black border border-white/10 rounded-xl px-4 py-2 focus:border-[#FFD000] outline-none transition-all font-bold"
+                        />
+                        <span className="text-xs font-black text-[#FFD000]">MAD</span>
+                      </div>
+                    ))}
+                    {deliveryPricingError && (
+                      <p className="text-red-500 text-xs font-bold">{deliveryPricingError}</p>
+                    )}
+                    {deliveryPricingMessage && (
+                      <p className="text-green-500 text-xs font-bold">{deliveryPricingMessage}</p>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={isSavingDeliveryPricing}
+                      className="w-full bg-[#FFD000] text-black py-3 rounded-xl font-black hover:opacity-90 transition-all disabled:opacity-60"
+                    >
+                      {isSavingDeliveryPricing ? "ENREGISTREMENT..." : "ENREGISTRER LES TARIFS"}
+                    </button>
+                  </form>
+                </section>
               </div>
             )}
           </motion.div>
